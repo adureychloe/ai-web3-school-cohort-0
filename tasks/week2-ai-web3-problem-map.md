@@ -165,36 +165,37 @@ Web3 的机制：
 
 ## 5. Week 2 主线选择
 
-我选择的 Week 2 主线：Wallet / Permission / Safe Execution，也就是“受限 Agent Wallet / 受限 Web3 助手”。
+我选择的 Week 2 主线：Payment / Commerce / Settlement，也就是“Agent 如何在可授权、可验证、可追踪的边界内完成报价、付款、交付、验收和结算”。
 
 选择原因：
-1. 它和我 Week 1 已经学过的 EOA、smart account、multisig 能自然衔接。
-2. 它足够贴近真实风险：AI × Web3 最大的问题不是让 agent 会说，而是让 agent 在可控边界内行动。
-3. 它可以形成一个小而清晰的 Hackathon 方向：做一个 agent workflow，帮助用户生成链上操作计划、风险摘要、确认清单和验证步骤，但不直接接触私钥。
-4. 它能继续连接 Week 2 后续任务：Agent Profile、Wallet Permission、Threat Model、Proposal。
+1. 它更接近 “Open Agentic Economy” 的核心问题：如果 agent 之间要协作，必须有清晰的报价、授权、付款、交付和收据。
+2. 它不是单纯的链上转账，而是把 AI 的任务理解、服务发现和结果验收，与 Web3 的稳定币、x402、预算控制、receipt、escrow 结合起来。
+3. 它可以形成一个小而清晰的 Hackathon 方向：做一个 agent commerce flow，让用户授权一笔小预算，agent 在预算内购买一个服务，并留下可审计记录。
+4. 它能继续连接 Week 2 后续任务：最小支付与商业流程拆解、x402 Paywall + CAW Agent 自主支付闭环、Agent Profile、Threat Model、Proposal。
 
 ## 6. 初步 MVP 想法
 
-暂定项目名：Safe Web3 Action Copilot
+暂定项目名：Agent Service Payment Copilot
 
-一句话：一个受限 Web3 助手，帮助用户把“我想做某个链上动作”转成可检查的执行计划、风险清单和人工确认步骤。
+一句话：一个面向 agent 服务购买的小型支付助手，帮助用户把“我想让 agent 帮我完成某个任务”转成报价、预算授权、执行、交付、验收、付款/退款和记录证明的完整流程。
 
 最小功能：
-- 用户输入目标：例如“我想在测试网上调用一个合约函数”或“我想授权一个小额 token 给某个服务”。
+- 用户输入目标：例如“我想让 agent 花不超过 1 USDC 调用一个付费数据 API，并把结果整理成摘要”。
 - Agent 输出：
-  - 目标链、合约地址、方法、参数、value、可能资产变化。
-  - 哪些是只读步骤，可以自动查询。
-  - 哪些是写入步骤，必须用户自己在钱包确认。
-  - 风险提示：approve、转账、合约写入、签名消息、未知合约。
-  - 验证方式：tx hash、block explorer、event、余额变化。
+  - 任务范围：用户要买什么服务，交付物是什么。
+  - 报价信息：价格、币种、有效期、服务方、退款/失败条件。
+  - 预算授权：任务预算、单次上限、服务方白名单、时间窗口。
+  - 执行流程：请求服务、识别 payment required、发起付款、获得结果。
+  - 验收方式：结果是否满足任务要求，是否需要人工确认。
+  - 记录证明：付款 tx hash、receipt、服务响应、交付摘要。
 - 系统边界：
   - 不接触私钥、助记词、API key。
-  - 不自动签名、不自动转账、不自动 approve。
-  - 所有高风险动作只生成草稿和确认清单。
+  - 不提供无限支付权限；所有付款都必须落在用户预设预算和服务方范围内。
+  - approve、提高额度、未知收款方、大额付款、重复扣款都必须人工确认。
 
 ## 7. 今天的下一步
 
 下一步我会围绕主线继续做两个产出：
 
-1. Agent profile 草图：这个 Safe Web3 Action Copilot 是谁、能做什么、怎么被调用、失败怎么处理。
-2. Wallet permission 策略：预算、白名单合约、可执行动作、人工确认阈值、撤销方式和日志记录。
+1. 最小 payment / commerce flow：谁下单、谁执行、谁验收、谁付款、谁仲裁。
+2. x402 / CAW / budget policy 草图：报价、预算、授权、付款、receipt、失败和退款如何串起来。
