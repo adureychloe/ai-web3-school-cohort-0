@@ -1,195 +1,195 @@
 # Week 2｜Wallet / Permission｜Agent 链上动作权限策略
 
-Date: 2026-05-26
-WCB task: Week 2｜Wallet / Permission｜Agent 链上动作权限策略
-Status: Draft for proof-of-work
+日期：2026-05-26
+WCB 任务：Week 2｜Wallet / Permission｜Agent 链上动作权限策略
+状态：Proof-of-Work 草稿
 
-## 1. Why I chose this task today
+## 1. 今天为什么做这个任务
 
-Yesterday I chose Week 2 mainline as Payment / Commerce / Settlement: how an agent can help a user purchase a service, finish delivery, verify the result, and leave auditable payment records.
+昨天我选择的 Week 2 主线是 Payment / Commerce / Settlement，也就是：Agent 如何帮助用户购买服务、完成交付、验收结果，并留下可审计的付款记录。
 
-Today I focused on the wallet / permission layer behind that mainline. My current understanding is:
+今天我把问题推进到更底层的钱包和权限问题。我的当前理解是：
 
-- Payment is not only “send money”. It is also authorization, limits, evidence, refund path, and failure handling.
-- An AI agent should not receive unlimited wallet control.
-- The wallet layer should turn a vague human goal into bounded executable permissions.
-- The safest default is: low-risk steps can be automated; high-risk actions require human confirmation.
+- Payment 不只是“把钱转出去”，还包括授权、限额、证明、退款路径和失败处理。
+- AI agent 不应该拿到无限制的钱包控制权。
+- 钱包层应该把用户的自然语言目标，转换成有边界、可执行、可撤销的权限。
+- 最安全的默认策略是：低风险步骤可以自动化，高风险动作必须由人确认。
 
-The scenario below is a minimum agent wallet design for an AI learning / research assistant that can buy small paid APIs or AI services on behalf of the user.
+下面的设计，是一个最小化 agent wallet 场景：一个 AI 学习 / 研究助手，可以在用户授权范围内，为用户购买小额付费 API 或 AI 服务。
 
-## 2. Scenario
+## 2. 场景设定
 
-User goal:
+用户目标：
 
-> “Help me research an AI × Web3 topic. You may buy small paid API results if needed, but keep total cost under a fixed budget and show me proof.”
+> “帮我研究一个 AI × Web3 主题。如果需要，可以购买小额付费 API 结果，但总花费必须在固定预算内，并向我展示证明。”
 
-Actors:
+参与方：
 
-| Actor | Role |
+| 参与方 | 角色 |
 | --- | --- |
-| User | Sets goal, budget, and final approval rules |
-| Learning Agent | Searches, compares services, calls tools, prepares outputs |
-| Agent Wallet / Smart Account | Executes approved payments and keeps logs |
-| Paywalled API / Service | Provides data, model output, or verification result |
-| Policy / Guard Layer | Checks whether an action is allowed before execution |
-| Block explorer / receipt store | Provides auditable transaction and payment evidence |
+| 用户 | 设置目标、预算和最终审批规则 |
+| Learning Agent | 搜索、比较服务、调用工具、整理输出 |
+| Agent Wallet / Smart Account | 执行被授权的付款，并保留日志 |
+| 付费 API / 服务方 | 提供数据、模型输出或验证结果 |
+| Policy / Guard 层 | 在执行前检查动作是否被允许 |
+| 区块浏览器 / receipt 存储 | 提供可审计的交易和付款证明 |
 
-Assets and risks:
+涉及的资产和风险：
 
-- Assets: stablecoin budget, API credits, user data, research output, wallet permissions.
-- Main risks: overspending, paying the wrong service, malicious prompt injection, fake tool output, approval fatigue, private data leakage, and irreversible transactions.
+- 资产：稳定币预算、API credits、用户数据、研究结果、钱包权限。
+- 主要风险：超预算、付给错误服务、prompt injection、伪造工具返回、确认疲劳、隐私数据泄露、不可逆交易。
 
-## 3. Agent chain-action flow
+## 3. Agent 发起链上动作的执行流程
 
 ```text
-[1] User sets goal and budget
-    - Example: “Research Cobo Agentic Wallet and x402. Max spend: 5 USDC.”
-    - Human confirmation required.
+[1] 用户设置目标和预算
+    - 例子：“研究 Cobo Agentic Wallet 和 x402，最高花费 5 USDC。”
+    - 必须人工确认。
 
         ↓
 
-[2] Agent creates an execution plan
-    - Search sources.
-    - Identify whether paid API access is needed.
-    - Estimate cost.
-    - No wallet action yet.
-    - Can be automated.
+[2] Agent 制定执行计划
+    - 搜索资料。
+    - 判断是否需要付费 API。
+    - 预估成本。
+    - 这一步还不涉及钱包动作。
+    - 可以自动化。
 
         ↓
 
-[3] Policy engine checks proposed wallet permissions
-    - Is the service allowlisted?
-    - Is the token allowed?
-    - Is the amount below per-action limit?
-    - Is total spend below daily / session budget?
-    - Can be automated if rules are already configured.
+[3] Policy engine 检查拟议的钱包权限
+    - 服务是否在 allowlist 内？
+    - token 是否被允许？
+    - 金额是否低于单次限额？
+    - 总花费是否低于每日 / 本次任务预算？
+    - 如果规则已经配置好，可以自动化。
 
         ↓
 
-[4] Human reviews high-risk or first-time payment
-    - Required if new service, new contract, high amount, unclear output, or unusual request.
-    - User sees: recipient, amount, purpose, expected result, refund / dispute path.
+[4] 用户复核高风险或首次付款
+    - 如果是新服务、新合约、高金额、结果不明确或异常请求，则必须人工确认。
+    - 用户需要看到：收款方、金额、用途、预期结果、退款 / 争议路径。
 
         ↓
 
-[5] Agent wallet executes payment
-    - Could use smart account, Safe module, x402 client, or delegated EOA permissions.
-    - Can be automated only inside the approved policy boundary.
+[5] Agent wallet 执行付款
+    - 可以使用 smart account、Safe module、x402 client 或被委托的 EOA 权限。
+    - 只有在已批准的 policy 边界内，才可以自动执行。
 
         ↓
 
-[6] Service returns result
-    - Agent verifies response format and quality.
-    - If result is invalid, agent marks it as disputed / failed.
-    - Can be automated for low-risk checks; human review for subjective acceptance.
+[6] 服务返回结果
+    - Agent 检查响应格式和质量。
+    - 如果结果无效，标记为 disputed / failed。
+    - 低风险格式检查可以自动化；主观验收需要人工复核。
 
         ↓
 
-[7] Logs and receipts are saved
-    - Save tx hash / payment receipt / API response metadata / policy decision.
-    - Never save secrets.
-    - Can be automated.
+[7] 保存日志和 receipt
+    - 保存 tx hash / payment receipt / API response metadata / policy decision。
+    - 不保存任何敏感信息。
+    - 可以自动化。
 
         ↓
 
-[8] User receives final report
-    - Shows what was paid, why, what was received, and what remains uncertain.
-    - Human reviews final output.
+[8] 用户收到最终报告
+    - 报告中说明：付了什么、为什么付、得到了什么、还有什么不确定。
+    - 用户复核最终输出。
 ```
 
-## 4. Automation vs human confirmation
+## 4. 哪些步骤可以自动化，哪些必须人工确认
 
-| Step | Can be automated? | Human confirmation required? | Reason |
+| 步骤 | 可以自动化吗？ | 是否需要人工确认？ | 原因 |
 | --- | --- | --- | --- |
-| Parse user goal | Yes | Only if ambiguous | Low-risk planning step |
-| Search public sources | Yes | No | No wallet action |
-| Compare services | Yes | No | Agent can rank options, but not blindly pay |
-| Set budget | No | Yes | Budget is a user decision |
-| First payment to a new service | No | Yes | New counterparty risk |
-| Payment under existing allowlist and limit | Yes | No, if policy allows | Pre-authorized small action |
-| Contract approval / allowance | Usually no | Yes | Approvals can create future loss risk |
-| Transfer above threshold | No | Yes | Direct asset movement |
-| Revoke permission | Yes | Optional confirmation | Usually safety-positive, but still should be logged |
-| Save receipt and logs | Yes | No | Auditability improvement |
-| Submit official course evidence | No | Yes | This affects external course record |
+| 解析用户目标 | 可以 | 目标模糊时需要 | 这是低风险规划步骤 |
+| 搜索公开资料 | 可以 | 不需要 | 不涉及钱包动作 |
+| 比较服务 | 可以 | 不需要 | Agent 可以排序，但不能盲目付款 |
+| 设置预算 | 不可以 | 需要 | 预算是用户决策 |
+| 首次向新服务付款 | 不可以 | 需要 | 有新 counterparty 风险 |
+| 已 allowlist 且低于限额的小额付款 | 可以 | 如果 policy 已允许，则不需要 | 属于预授权小额动作 |
+| 合约 approval / allowance | 通常不可以 | 需要 | 授权可能造成未来资产损失 |
+| 超过阈值的 transfer | 不可以 | 需要 | 直接移动资产 |
+| 撤销权限 | 可以 | 可选确认 | 通常是安全正向动作，但仍要记录 |
+| 保存 receipt 和日志 | 可以 | 不需要 | 增强可审计性 |
+| 提交官方课程证明 | 不可以 | 需要 | 会影响外部课程记录 |
 
-## 5. Permission strategy
+## 5. 权限策略设计
 
-### 5.1 Budget
+### 5.1 预算
 
-- Session budget: max 5 USDC for one research task.
-- Per-payment limit: max 1 USDC without human confirmation.
-- Daily limit: max 10 USDC across all agent actions.
-- Hard stop: if cumulative spending reaches the limit, the agent cannot continue payments.
+- 单次 session 预算：一个研究任务最多 5 USDC。
+- 单笔付款限额：不经人工确认时，最多 1 USDC。
+- 每日限额：所有 agent 动作合计最多 10 USDC。
+- 硬停止规则：累计支出达到限额后，agent 不能继续付款。
 
-### 5.2 Allowed tokens
+### 5.2 允许使用的 token
 
-- Prefer testnet tokens for experiments.
-- For real payments, only allow a specific stablecoin such as USDC.
-- Do not allow volatile token swaps in the minimum version.
+- 实验优先使用 testnet token。
+- 如果是真实付款，只允许指定稳定币，例如 USDC。
+- 最小版本不允许 volatile token swap。
 
-### 5.3 Callable contracts / services
+### 5.3 可调用合约 / 服务
 
-Allowlist only:
+只允许 allowlist 中的对象：
 
-- Known x402-compatible paywalled endpoints.
-- Known payment settlement contract or smart account module.
-- Known revoke / permission management contract.
+- 已知的 x402-compatible paywalled endpoints。
+- 已知 payment settlement contract 或 smart account module。
+- 已知 revoke / permission management contract。
 
-Deny by default:
+默认拒绝：
 
-- Unknown spender addresses.
-- Unlimited approvals.
-- Arbitrary contract calls.
-- Bridges, swaps, lending, staking, and NFT minting unless separately approved.
+- 未知 spender address。
+- 无限授权。
+- 任意合约调用。
+- bridge、swap、lending、staking、NFT minting，除非单独确认。
 
-### 5.4 Executable actions
+### 5.4 可执行动作
 
-Allowed in the minimum version:
+最小版本允许：
 
-- Read wallet balance.
-- Read policy state.
-- Request quote.
-- Pay a small invoice under the configured limit.
-- Store receipt / tx hash.
-- Revoke a session permission.
+- 读取钱包余额。
+- 读取 policy 状态。
+- 请求报价。
+- 在配置限额内支付小额 invoice。
+- 保存 receipt / tx hash。
+- 撤销 session permission。
 
-Not allowed by default:
+默认不允许：
 
-- Export private keys or seed phrases.
-- Sign arbitrary messages without clear purpose.
-- Grant unlimited token allowance.
-- Change wallet owner.
-- Upgrade wallet implementation.
-- Interact with unknown contracts.
+- 导出私钥或助记词。
+- 在没有清晰目的时签署任意消息。
+- 授予无限 token allowance。
+- 修改钱包 owner。
+- 升级钱包实现。
+- 和未知合约交互。
 
-### 5.5 Human confirmation thresholds
+### 5.5 人工确认阈值
 
-Human confirmation is required when:
+以下情况必须人工确认：
 
-1. Recipient / contract is not allowlisted.
-2. Amount is above per-payment limit.
-3. Total session budget would be exceeded.
-4. The action is an approval, delegation, module install, or policy change.
-5. Tool output conflicts with wallet simulation.
-6. Prompt or webpage asks the agent to ignore previous instructions.
-7. The transaction has irreversible or unclear consequences.
+1. 收款方 / 合约不在 allowlist 内。
+2. 金额超过单笔付款限额。
+3. 执行后会超过本次 session 总预算。
+4. 动作属于 approval、delegation、module install 或 policy change。
+5. 工具返回结果和 wallet simulation 结果冲突。
+6. prompt 或网页要求 agent 忽略之前的规则。
+7. 交易后果不可逆，或后果不清晰。
 
-### 5.6 Revocation
+### 5.6 撤销方式
 
-The user must be able to revoke:
+用户必须可以撤销：
 
-- A single service permission.
-- A session budget.
-- A delegated key or session key.
-- A Safe module / guard.
-- All agent permissions at once.
+- 单个服务权限。
+- 本次 session 预算。
+- delegated key 或 session key。
+- Safe module / guard。
+- 所有 agent 权限。
 
-Revocation should be visible in the UI and logged as a safety event.
+撤销动作应该在 UI 中清晰可见，并作为安全事件记录到日志中。
 
-### 5.7 Logs
+### 5.7 日志记录
 
-Each payment attempt should create a structured log:
+每次付款尝试都应该生成结构化日志：
 
 ```json
 {
@@ -207,101 +207,101 @@ Each payment attempt should create a structured log:
 }
 ```
 
-Logs should not include API keys, private user data, private meeting links, private keys, seed phrases, or `.env` content.
+日志不应该包含 API key、用户隐私数据、私人会议链接、私钥、助记词或 `.env` 内容。
 
-### 5.8 Failure handling
+### 5.8 失败处理
 
-| Failure | Handling |
+| 失败情况 | 处理方式 |
 | --- | --- |
-| Payment fails | Stop, show reason, do not retry infinitely |
-| API returns bad output | Mark as failed, keep receipt, ask whether to dispute / retry |
-| Agent detects prompt injection | Refuse wallet action, save incident log |
-| Policy engine unavailable | Fail closed: no payment |
-| User cancels | Revoke session permission and stop |
-| Budget exceeded | Stop payment path and ask user for new budget |
+| 付款失败 | 停止，展示原因，不无限重试 |
+| API 返回结果质量差 | 标记为 failed，保留 receipt，询问是否 dispute / retry |
+| Agent 检测到 prompt injection | 拒绝钱包动作，并保存 incident log |
+| Policy engine 不可用 | Fail closed：不付款 |
+| 用户取消 | 撤销 session permission 并停止 |
+| 预算超限 | 停止付款路径，并询问用户是否设置新预算 |
 
-## 6. Why ERC-4337, Safe, and guard / policy matter
+## 6. ERC-4337、Safe、guard / policy 为什么重要
 
-### ERC-4337
+### 6.1 ERC-4337
 
-ERC-4337 matters because it makes account abstraction practical without requiring every user to manage only a basic EOA flow. For agent wallets, the important idea is that the account can support richer validation logic than “whoever has the private key can do everything”.
+ERC-4337 的价值在于，它让 account abstraction 更容易落地。对于 agent wallet 来说，重要的不是“钱包更酷”，而是账户可以支持比普通 EOA 更丰富的验证逻辑，不再只是“谁有私钥谁就能做所有事”。
 
-Risks it helps with:
+它帮助解决的风险：
 
-- Session permissions instead of full wallet control.
-- Spending limits.
-- Bundled user operations.
-- Gas sponsorship / smoother UX.
-- More programmable validation before execution.
+- 用 session permission 替代完整钱包控制权。
+- 设置 spending limit。
+- 支持 bundled user operations。
+- 支持 gas sponsorship / 更顺滑的 UX。
+- 在执行前加入更可编程的验证逻辑。
 
-My takeaway: ERC-4337 is useful when the wallet needs rules, not just signatures.
+我的理解：当钱包需要规则，而不只是签名时，ERC-4337 就变得重要。
 
-### Safe
+### 6.2 Safe
 
-Safe matters because it is a battle-tested smart account / multisig pattern for protecting valuable assets. For agent workflows, I would not want an AI agent to control a normal EOA with all funds. A Safe-style setup can separate ownership, modules, guards, and thresholds.
+Safe 的价值在于，它是相对成熟、经过大量使用的 smart account / multisig 模式，适合保护高价值资产。对于 agent workflow，我不希望 AI agent 直接控制一个装有所有资金的普通 EOA。Safe-style setup 可以把 owner、module、guard、threshold 分开。
 
-Risks it helps with:
+它帮助解决的风险：
 
-- Single-key loss.
-- Unauthorized treasury movement.
-- Need for multi-person or multi-device confirmation.
-- Adding controlled modules instead of giving away full custody.
+- 单一私钥丢失。
+- treasury 被未授权移动。
+- 需要多人或多设备确认。
+- 通过受控 module 委托部分能力，而不是交出完整 custody。
 
-My takeaway: Safe is useful when the wallet must protect real assets and support controlled delegation.
+我的理解：当钱包保护真实资产，并且需要受控 delegation 时，Safe 很重要。
 
-### Guard / policy mechanism
+### 6.3 Guard / policy 机制
 
-A guard or policy layer matters because it is the place where human intent becomes enforceable rules. The agent can propose actions, but the policy decides whether the action is allowed.
+Guard 或 policy 层的价值在于，它是把人的意图变成可执行规则的地方。Agent 可以提出动作，但 policy 决定这个动作是否被允许。
 
-Risks it helps with:
+它帮助解决的风险：
 
-- Prompt injection causing unauthorized payments.
-- Agent hallucinating a recipient address.
-- Tool output being forged or misleading.
-- Overspending.
-- Unlimited approvals.
-- Calling contracts outside the task scope.
+- prompt injection 导致未授权付款。
+- agent 幻觉出错误收款地址。
+- 工具返回被伪造或误导。
+- 超预算。
+- 无限授权。
+- 调用任务范围外的合约。
 
-My takeaway: the policy layer is the “seatbelt” between natural-language autonomy and irreversible blockchain execution.
+我的理解：policy 层是自然语言自治和不可逆链上执行之间的“安全带”。
 
-## 7. Minimum viable policy table
+## 7. 最小可行 policy 表
 
-| Policy | Rule | Default |
+| Policy | 规则 | 默认要求 |
 | --- | --- | --- |
-| Budget | Max 5 USDC per session | Required |
-| Per-payment amount | Max 1 USDC without confirmation | Required |
-| Token | USDC only | Required |
-| Recipient | Allowlisted service only | Required |
-| Contract calls | Payment / receipt / revoke only | Required |
-| Approval | No unlimited approval | Required |
-| New service | Human confirmation | Required |
-| Logs | Save receipt and reason | Required |
-| Revocation | One-click session revoke | Required |
-| Failure mode | Fail closed | Required |
+| Budget | 每个 session 最多 5 USDC | 必须配置 |
+| 单笔付款 | 不确认时最多 1 USDC | 必须配置 |
+| Token | 只允许 USDC | 必须配置 |
+| 收款方 | 只允许 allowlisted service | 必须配置 |
+| 合约调用 | 只允许 payment / receipt / revoke | 必须配置 |
+| Approval | 禁止无限授权 | 必须配置 |
+| 新服务 | 必须人工确认 | 必须配置 |
+| 日志 | 保存 receipt 和原因 | 必须配置 |
+| 撤销 | 一键撤销 session 权限 | 必须配置 |
+| 失败模式 | Fail closed | 必须配置 |
 
-## 8. Connection back to Payment / Commerce mainline
+## 8. 和 Payment / Commerce 主线的关系
 
-This task helped me refine the Week 2 mainline. My previous focus was “how agent payment works”; today I realized the harder question is “how payment remains bounded and reviewable”.
+这个任务让我重新理解 Week 2 的主线。之前我关注的是“agent payment 怎么发生”；今天我意识到更难的问题是“agent payment 如何保持有边界、可复核、可撤销”。
 
-A minimal agent commerce flow should have three layers:
+一个最小 agent commerce flow 至少需要三层：
 
-1. Commerce layer: quote, order, delivery, acceptance, refund / dispute.
-2. Wallet layer: budget, payment, receipt, revocation.
-3. Policy layer: allowlist, limits, simulation, human confirmation, logs.
+1. Commerce layer：quote、order、delivery、acceptance、refund / dispute。
+2. Wallet layer：budget、payment、receipt、revocation。
+3. Policy layer：allowlist、limits、simulation、human confirmation、logs。
 
-Without the wallet and policy layers, “agent payment” is just unsafe automation.
+如果没有 wallet 和 policy 层，“agent 自动付款”只是危险的自动化；只有边界清晰，它才可能成为可验证、可审计的 Web3 workflow。
 
-## 9. Open questions
+## 9. 仍然没解决的问题
 
-1. What is the best UX for showing policy decisions to a non-technical user?
-2. Should small x402 payments be confirmed one by one, or batched under a session budget?
-3. How can the user verify that a paid API result is real and not fabricated by the agent?
-4. When should refund / dispute logic be onchain, and when is an offchain receipt enough?
-5. How should agent wallet logs balance transparency with privacy?
+1. 怎样用最简单的 UX 向非技术用户展示 policy decision？
+2. 小额 x402 payment 应该每次确认，还是在 session budget 下批量授权？
+3. 用户如何验证 paid API result 真实存在，而不是 agent 编造的？
+4. 哪些 refund / dispute logic 值得上链，哪些 offchain receipt 就足够？
+5. Agent wallet logs 如何在透明度和隐私之间平衡？
 
-## 10. Next steps
+## 10. 下一步
 
-- Connect this permission strategy with the Week 2 Payment / Commerce flow.
-- Draft a minimum x402 + agent wallet architecture.
-- Compare x402, MPP, ERC-8004, and Safe / ERC-4337 in the context of a small paid research agent.
-- Use this note as proof-of-work for the Wallet / Permission task after review.
+- 把这份 permission strategy 和 Week 2 Payment / Commerce flow 连接起来。
+- 草拟一个最小 x402 + agent wallet 架构。
+- 比较 x402、MPP、ERC-8004 和 Safe / ERC-4337 在小额 paid research agent 场景中的分工。
+- 复核后，把这篇笔记作为 Wallet / Permission 任务的 proof-of-work。
