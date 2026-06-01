@@ -1,0 +1,69 @@
+{
+  "services": [
+    {
+      "id": "research-agent-01",
+      "name": "Research Notes Generator",
+      "description": "根据用户提供的主题，生成结构化的研究笔记和参考资料清单",
+      "price": {
+        "amount": "0.25",
+        "token": "USDC",
+        "network": "Base"
+      },
+      "delivery_type": "markdown_notes",
+      "estimated_delivery_time": "~30 seconds",
+      "allowlisted": true
+    },
+    {
+      "id": "data-fetcher-02",
+      "name": "On-chain Data Fetcher",
+      "description": "通过 RPC 查询指定地址或合约的链上数据，返回结构化 JSON",
+      "price": {
+        "amount": "0.50",
+        "token": "USDC",
+        "network": "Base"
+      },
+      "delivery_type": "json_data",
+      "estimated_delivery_time": "~10 seconds",
+      "allowlisted": true
+    },
+    {
+      "id": "model-inference-03",
+      "name": "Distilled Model Inference",
+      "description": "对输入文本进行模型推理返回分析结果（非生产级，仅供 demo）",
+      "price": {
+        "amount": "1.00",
+        "token": "USDC",
+        "network": "Base"
+      },
+      "delivery_type": "model_output",
+      "estimated_delivery_time": "~60 seconds",
+      "allowlisted": true
+    },
+    {
+      "id": "premium-analyzer-04",
+      "name": "Premium Market Analyzer",
+      "description": "深度市场分析，含跨链交易对和流动性池数据（非 allowlist 服务）",
+      "price": {
+        "amount": "3.00",
+        "token": "USDC",
+        "network": "Base"
+      },
+      "delivery_type": "analysis_report",
+      "estimated_delivery_time": "~120 seconds",
+      "allowlisted": false
+    },
+    {
+      "id": "smart-contract-auditor-05",
+      "name": "Smart Contract Auditor",
+      "description": "对已部署合约进行基础安全检查并生成风险报告",
+      "price": {
+        "amount": "5.00",
+        "token": "USDC",
+        "network": "Base"
+      },
+      "delivery_type": "audit_report",
+      "estimated_delivery_time": "~300 seconds",
+      "allowlisted": false
+    }
+  ]
+}

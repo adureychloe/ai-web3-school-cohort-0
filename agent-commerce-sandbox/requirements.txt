@@ -1,0 +1,2 @@
+# Agent Commerce Sandbox — 最小依赖
+# 当前阶段无需第三方依赖，使用 Python 3 标准库即可

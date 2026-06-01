@@ -1,0 +1,34 @@
+{
+  "session": {
+    "session_limit": "5.00",
+    "session_limit_token": "USDC",
+    "session_spent": "0.00"
+  },
+  "single_payment": {
+    "auto_limit": "0.50",
+    "auto_limit_token": "USDC",
+    "human_confirmation_threshold": "0.50"
+  },
+  "allowed": {
+    "tokens": ["USDC"],
+    "networks": ["Base"],
+    "allowlisted_service_ids": [
+      "research-agent-01",
+      "data-fetcher-02",
+      "model-inference-03"
+    ]
+  },
+  "high_risk_actions": [
+    "approval",
+    "delegation",
+    "module_install",
+    "ownership_transfer"
+  ],
+  "human_confirmation_rules": [
+    "service_not_in_allowlist",
+    "single_payment_exceeds_auto_limit",
+    "cumulative_session_exceeds_50_percent",
+    "first_time_service_in_session",
+    "high_risk_action_detected"
+  ]
+}
