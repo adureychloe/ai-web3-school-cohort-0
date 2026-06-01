@@ -4,32 +4,24 @@ from typing import Optional
 
 from .mock_services import discover_services, get_service, format_quote
 from .policy_checker import check_policy, check_add_to_session_spent, load_policy
-from .payment_simulator import simulate_payment
+from .payment_engine import execute_payment
 from .proof_logger import ProofLogger
+from . import chain as chain_module
 
 
 class HumanConfirmationResult:
     """Simulated human confirmation gate."""
-
-    def __init__(self):
-        self.confirmed = False
-        self.reason = ""
 
     def request_confirmation(self, decision, quote) -> "HumanConfirmationResult":
         """
         Simulate human confirmation.
 
         In interactive mode this would prompt the user.
-        In automated mode, returns a result based on context.
+        In automated mode, returns accepted.
         """
         result = HumanConfirmationResult()
-        # In scenario mode, we accept if only budget warnings exist
-        if all(r == "cumulative_session_exceeds_50_percent" for r in decision.confirmation_reasons):
-            result.confirmed = True
-            result.reason = "Auto-accepted: only budget warning, no new services"
-        else:
-            result.confirmed = True
-            result.reason = "Human reviewed and accepted (simulated)"
+        result.confirmed = True
+        result.reason = "Human reviewed and accepted (simulated)"
         return result
 
 
@@ -38,15 +30,17 @@ def run_flow(
     service_id: str,
     scenario: str = "normal",
     interactive: bool = False,
+    real_mode: bool = False,
 ) -> dict:
     """
     Run the complete agent commerce flow.
 
     Parameters:
-        user_intent: Natural language description of what the user wants
+        user_intent: Natural language description
         service_id: The service to purchase
         scenario: 'normal', 'over_budget', or 'unknown_service'
         interactive: If True, pause for human input at confirmation gates
+        real_mode: If True, execute real testnet payments via web3.py
 
     Returns:
         Dictionary with full proof log
@@ -55,9 +49,11 @@ def run_flow(
     service = get_service(service_id)
     if not service:
         return {"error": f"Service '{service_id}' not found"}
+    print(f"  [Engine] Discovered: {service['name']}")
 
     # Step 2: Get quote
     quote = format_quote(service)
+    print(f"  [Engine] Quote: {quote['amount']} {quote['token']} on {quote['network']}")
 
     # Step 3: Check policy
     amount = float(quote["amount"])
@@ -67,6 +63,7 @@ def run_flow(
         token=quote["token"],
         network=quote["network"],
     )
+    print(f"  [Engine] Policy: {'ALLOWED' if decision.allowed else 'DENIED'}")
 
     # Step 3b: If denied by policy, stop immediately
     if not decision.allowed:
@@ -85,6 +82,7 @@ def run_flow(
     # Step 4: Human confirmation (if required)
     human_confirmation = None
     if decision.human_confirmation_required:
+        print(f"  [Engine] Human confirmation required: {', '.join(decision.confirmation_reasons)}")
         gate = HumanConfirmationResult()
         confirm_result = gate.request_confirmation(decision, quote)
         human_confirmation = {
@@ -93,7 +91,6 @@ def run_flow(
             "confirmed_by": "user",
         }
         if not confirm_result.confirmed:
-            # Flow stopped
             proof_logger = ProofLogger()
             proof = proof_logger.log_session(
                 user_intent=user_intent,
@@ -106,13 +103,26 @@ def run_flow(
             )
             return proof
 
-    # Step 5: Simulate payment
-    receipt = simulate_payment(
-        service_id=service["id"],
-        amount=quote["amount"],
+    # Step 5: Execute payment (real or simulated)
+    # In REAL mode, send test ETH to the service address
+    # In SIMULATION mode, generate mock receipt
+    service_addresses = {
+        "research-agent-01": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+        "data-fetcher-02": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+        "model-inference-03": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+        "premium-analyzer-04": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+        "smart-contract-auditor-05": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+    }
+    to_address = service_addresses.get(service["id"], "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18")
+
+    receipt = execute_payment(
+        to_address=to_address,
+        amount=amount,
         token=quote["token"],
         network=quote["network"],
+        real_mode=real_mode,
     )
+    print(f"  [Engine] Payment: {receipt.receipt_id} ({receipt.mode})")
 
     # Update session spent
     check_add_to_session_spent(amount)
