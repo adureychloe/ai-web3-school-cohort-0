@@ -1,6 +1,7 @@
 """Core flow engine: orchestrates the complete agent commerce flow."""
 
 from typing import Optional
+import uuid
 
 from .mock_services import discover_services, get_service, format_quote, compute_registry_hash, load_services
 from .policy_checker import check_policy, check_add_to_session_spent, load_policy
@@ -183,7 +184,22 @@ def run_flow(
             return proof
 
     # Step 6: Execute payment (Cobo API or local sim)
-    to_address = service.get("payment_address", "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18")
+    payment_address = service.get("payment_address", "")
+    if not payment_address:
+        print(f"  [Engine] ERROR: Service '{service_id}' has no payment_address")
+        proof = proof_logger.log_session(
+            user_intent=user_intent,
+            budget=load_policy()["session"],
+            quote=quote,
+            policy_decision=decision.to_dict(),
+            human_confirmation=human_confirmation,
+            payment_receipt={"status": "blocked", "error": "missing_payment_address"},
+            delivery_result={"status": "blocked", "error": "missing_payment_address"},
+            guard_evidence=guard_result.to_dict(),
+            cobo_result=None,
+        )
+        return proof
+    to_address = payment_address
 
     cobo = CoboClient()
     cobo_result_dict = None
@@ -213,6 +229,15 @@ def run_flow(
             }
 
         print(f"  [Cobo] Pact {pact.pact_id} — status={pact.status}")
+
+        if pact.status != "ACTIVE":
+            print(f"  [Cobo] Pact not executable (status={pact.status}) — aborting transfer")
+            return {
+                "status": "blocked",
+                "error": f"Pact status is {pact.status}, not ACTIVE",
+                "guard_evidence": guard_result.to_dict(),
+                "cobo_result": {"mode": pact.mode, "pact_id": pact.pact_id, "pact_status": pact.status},
+            }
 
         # Execute transfer under pact
         tx = cobo.execute_transfer(
@@ -254,6 +279,8 @@ def run_flow(
         }
     else:
         # Local simulation mode (original behavior)
+        if real_mode:
+            print(f"  WARNING: Demo mode — sending quote amount {amount} as ETH (not {quote['token']}) on testnet")
         receipt = execute_payment(
             to_address=to_address,
             amount=amount,
@@ -273,6 +300,7 @@ def run_flow(
     }
 
     # Step 8: Generate proof log
+    session_id = str(uuid.uuid4())[:8]
     proof_logger = ProofLogger()
     proof = proof_logger.log_session(
         user_intent=user_intent,
@@ -285,5 +313,10 @@ def run_flow(
         guard_evidence=guard_result.to_dict(),
         cobo_result=cobo_result_dict,
     )
+
+    # Save proof to disk
+    proof_logger.save_receipt(proof, session_id)
+    proof_logger.save_proof_md(proof, session_id)
+    proof["session_id"] = session_id
 
     return proof

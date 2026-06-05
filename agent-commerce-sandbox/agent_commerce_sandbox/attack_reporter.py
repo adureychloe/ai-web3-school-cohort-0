@@ -8,6 +8,7 @@ Receives a GuardResult (when guard blocks) and produces:
 
 import json
 import os
+import re
 import time
 import uuid
 from dataclasses import dataclass, asdict
@@ -32,7 +33,9 @@ class AttackReport:
     session_id: str = ""
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d["schema_version"] = "1.0"
+        return d
 
 
 def generate_attack_report(
@@ -97,7 +100,7 @@ def save_attack_report(report: AttackReport) -> dict:
         dict with paths: {"json_path": "...", "md_path": "..."}
     """
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    base = f"attack-report-{report.session_id or report.report_id}"
+    base = f"attack-report-{re.sub(r'[^a-zA-Z0-9_-]', '_', str(report.session_id or report.report_id))}"
 
     # JSON
     json_path = os.path.join(OUTPUT_DIR, f"{base}.json")

@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+from decimal import Decimal
 from dataclasses import dataclass, field, asdict
 from typing import Any, Optional
 
@@ -76,6 +77,7 @@ class GuardResult:
             "risk_score": self.risk_score,
             "verdict": self.verdict,
             "blocking_reasons": self.blocking_reasons,
+            "report_data": self.report_data or None,
         }
 
 
@@ -152,7 +154,7 @@ def check_price_tampering(
     for svc in services_data.get("services", []):
         if svc["id"] == service_id:
             registered_price = svc.get("price", {}).get("amount", "0")
-            if str(quote_amount) != str(registered_price):
+            if Decimal(str(quote_amount).strip()) != Decimal(str(registered_price).strip()):
                 return GuardCheck(
                     name="price_tampering",
                     passed=False,
@@ -257,9 +259,9 @@ def check_intent_consistency(
             detail=f"Low intent-service overlap (jaccard={jaccard:.2f})",
             evidence={
                 "jaccard_similarity": round(jaccard, 2),
-                "intent_keywords": list(intent_words),
-                "service_keywords": list(service_words),
-                "overlap": list(overlap),
+                "intent_keywords": sorted(intent_words),
+                "service_keywords": sorted(service_words),
+                "overlap": sorted(overlap),
             },
         )
 

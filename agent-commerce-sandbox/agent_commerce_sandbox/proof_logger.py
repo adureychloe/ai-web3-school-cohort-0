@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import time
 from typing import Optional
 
@@ -42,6 +43,7 @@ class ProofLogger:
             Proof dictionary
         """
         proof = {
+            "schema_version": "1.0",
             "project": "Secure Agent Commerce",
             "user_intent": user_intent,
             "budget": budget,
@@ -53,20 +55,22 @@ class ProofLogger:
             "guard_evidence": guard_evidence,
             "cobo_result": cobo_result,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "sensitive_data_saved": False,
+            "sensitive_data_saved": True,
         }
         return proof
 
     def save_receipt(self, proof: dict, session_id: str) -> str:
         """Save machine-readable receipt JSON."""
-        path = os.path.join(self.output_dir, f"receipt-{session_id}.json")
+        safe_id = re.sub(r'[^a-zA-Z0-9_-]', '_', str(session_id))
+        path = os.path.join(self.output_dir, f"receipt-{safe_id}.json")
         with open(path, "w") as f:
             json.dump(proof, f, indent=2, ensure_ascii=False)
         return path
 
     def save_proof_md(self, proof: dict, session_id: str) -> str:
         """Save human-readable proof markdown."""
-        path = os.path.join(self.output_dir, f"proof-{session_id}.md")
+        safe_id = re.sub(r'[^a-zA-Z0-9_-]', '_', str(session_id))
+        path = os.path.join(self.output_dir, f"proof-{safe_id}.md")
         lines = [
             f"# Secure Agent Commerce Proof — {session_id}",
             "",

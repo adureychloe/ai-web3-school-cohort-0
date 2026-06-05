@@ -4,7 +4,7 @@ Secure Agent Commerce — CLI Entry Point
 
 Usage:
     # Existing commands (local sim)
-    python run.py [normal|over_budget|unknown_service|all|check|list|balance]
+    python run.py [normal|over_budget|non_allowlisted_service|all|check|list|balance]
 
     # Guard demo commands
     python run.py guard-demo normal          # Normal → Guard PASS → payment
@@ -20,6 +20,7 @@ Usage:
 import json
 import sys
 import os
+from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -30,6 +31,9 @@ from agent_commerce_sandbox.proof_logger import ProofLogger
 from agent_commerce_sandbox.cobo_client import CoboClient
 from agent_commerce_sandbox import chain as chain_module
 from agent_commerce_sandbox import mock_services
+
+# Ensure output directory exists
+os.makedirs("output", exist_ok=True)
 
 BANNER = """
 ╔══════════════════════════════════════════╗
@@ -93,9 +97,9 @@ def run_over_budget_scenario(real_mode: bool = False, cobo_mode: bool = False):
     return proof
 
 
-def run_unknown_service_scenario(real_mode: bool = False, cobo_mode: bool = False):
-    """Scenario 3: Unknown service — not in allowlist, triggers human confirmation."""
-    print_header("Scenario 3: Unknown Service (Triggers Human Confirmation)")
+def run_non_allowlisted_service_scenario(real_mode: bool = False, cobo_mode: bool = False):
+    """Scenario 3: Non-allowlisted service — triggers human confirmation."""
+    print_header("Scenario 3: Non-Allowlisted Service (Triggers Human Confirmation)")
     print(f"  Mode: {'COBO' if cobo_mode else 'SIMULATION'}{'+REAL' if real_mode else ''}")
     print("  Intent: '帮我获取 Premium 级别的跨链市场分析'")
     print("  Service: premium-analyzer-04 (Premium Market Analyzer) — 3.00 USDC\n")
@@ -103,7 +107,7 @@ def run_unknown_service_scenario(real_mode: bool = False, cobo_mode: bool = Fals
     proof = run_flow(
         user_intent="获取 Premium 级别的跨链市场分析",
         service_id="premium-analyzer-04",
-        scenario="unknown_service",
+        scenario="non_allowlisted_service",
         real_mode=real_mode,
         cobo_mode=cobo_mode,
     )
@@ -193,17 +197,18 @@ def run_guard_demo_price_tamper(cobo_mode: bool = False):
         # Reload mock services module cache
         reload(mock_services)
 
-    proof = run_flow(
-        user_intent="帮我做跨链市场分析",
-        service_id="premium-analyzer-04",
-        scenario="guard_price_tamper",
-        cobo_mode=cobo_mode,
-    )
-
-    # Restore original services.json
-    with open(services_path, "w") as f:
-        f.write(original)
-    reload(mock_services)
+    try:
+        proof = run_flow(
+            user_intent="帮我做跨链市场分析",
+            service_id="premium-analyzer-04",
+            scenario="guard_price_tamper",
+            cobo_mode=cobo_mode,
+        )
+    finally:
+        # Restore original services.json (even if run_flow crashes)
+        with open(services_path, "w") as f:
+            f.write(original)
+        reload(mock_services)
 
     _print_proof_result(proof)
     return proof
@@ -306,6 +311,9 @@ def main():
     real_mode = "--real" in sys.argv[1:]
     cobo_mode = "--cobo" in sys.argv[1:]
 
+    # Load .env before any CoboClient instantiation
+    load_dotenv()
+
     if real_mode:
         config = chain_module.load_config_from_env()
         if not config.is_real:
@@ -350,7 +358,7 @@ def main():
     elif cmd == "all":
         run_normal_scenario(real_mode, cobo_mode)
         run_over_budget_scenario(real_mode, cobo_mode)
-        run_unknown_service_scenario(real_mode, cobo_mode)
+        run_non_allowlisted_service_scenario(real_mode, cobo_mode)
 
     elif cmd == "normal":
         run_normal_scenario(real_mode, cobo_mode)
@@ -358,8 +366,8 @@ def main():
     elif cmd == "over_budget":
         run_over_budget_scenario(real_mode, cobo_mode)
 
-    elif cmd == "unknown_service":
-        run_unknown_service_scenario(real_mode, cobo_mode)
+    elif cmd == "non_allowlisted_service":
+        run_non_allowlisted_service_scenario(real_mode, cobo_mode)
 
     elif cmd == "check":
         _run_dry_check()
@@ -376,7 +384,7 @@ def main():
     else:
         print(f"Unknown: {cmd}")
         print("Commands:")
-        print("  normal | over_budget | unknown_service | all | check | list | balance")
+        print("  normal | over_budget | non_allowlisted_service | all | check | list | balance")
         print("  guard-demo [normal|injection|price-tamper]")
         print("  --cobo  Use Cobo API mode (add before any command)")
         print("  --real  Use real testnet payment")

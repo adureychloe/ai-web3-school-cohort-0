@@ -16,6 +16,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Optional
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
+from dotenv import load_dotenv
 
 
 # ── Data classes ──────────────────────────────────────────────
@@ -60,10 +61,13 @@ class CoboClient:
     BASE_URL = "https://api.cobo.com"
 
     def __init__(self):
+        load_dotenv()
         self.api_key = os.environ.get("COBO_API_KEY", "").strip()
         self.wallet_id = os.environ.get("COBO_WALLET_ID", "").strip()
         self.base_url = os.environ.get("COBO_API_BASE", self.BASE_URL).rstrip("/")
         self.is_real = bool(self.api_key and self.wallet_id)
+        self.output_dir = "output"
+        os.makedirs(self.output_dir, exist_ok=True)
 
     @property
     def mode(self) -> str:
@@ -226,6 +230,7 @@ class CoboClient:
             "amount": str(amount),
             "token_id": token_id,
             "chain_id": chain_id,
+            "pact_id": pact_id,
         }
         if request_id:
             body["request_id"] = request_id
