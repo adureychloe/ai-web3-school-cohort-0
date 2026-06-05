@@ -2,7 +2,7 @@
   "session": {
     "session_limit": "5.00",
     "session_limit_token": "USDC",
-    "session_spent": "0.00"
+    "session_spent": "0.75"
   },
   "single_payment": {
     "auto_limit": "0.50",
@@ -10,8 +10,12 @@
     "human_confirmation_threshold": "0.50"
   },
   "allowed": {
-    "tokens": ["USDC"],
-    "networks": ["Base"],
+    "tokens": [
+      "USDC"
+    ],
+    "networks": [
+      "Base"
+    ],
     "allowlisted_service_ids": [
       "research-agent-01",
       "data-fetcher-02",

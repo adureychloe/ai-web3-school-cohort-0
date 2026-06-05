@@ -9,6 +9,7 @@
         "token": "USDC",
         "network": "Base"
       },
+      "payment_address": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
       "delivery_type": "markdown_notes",
       "estimated_delivery_time": "~30 seconds",
       "allowlisted": true
@@ -22,6 +23,7 @@
         "token": "USDC",
         "network": "Base"
       },
+      "payment_address": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
       "delivery_type": "json_data",
       "estimated_delivery_time": "~10 seconds",
       "allowlisted": true
@@ -35,6 +37,7 @@
         "token": "USDC",
         "network": "Base"
       },
+      "payment_address": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
       "delivery_type": "model_output",
       "estimated_delivery_time": "~60 seconds",
       "allowlisted": true
@@ -48,6 +51,7 @@
         "token": "USDC",
         "network": "Base"
       },
+      "payment_address": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5",
       "delivery_type": "analysis_report",
       "estimated_delivery_time": "~120 seconds",
       "allowlisted": false
@@ -61,6 +65,7 @@
         "token": "USDC",
         "network": "Base"
       },
+      "payment_address": "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5",
       "delivery_type": "audit_report",
       "estimated_delivery_time": "~300 seconds",
       "allowlisted": false

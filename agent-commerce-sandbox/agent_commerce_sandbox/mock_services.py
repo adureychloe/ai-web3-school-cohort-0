@@ -1,5 +1,6 @@
 """Mock services: predefined services and service discovery."""
 
+import hashlib
 import json
 import os
 from typing import Optional
@@ -44,3 +45,21 @@ def format_quote(service: dict) -> dict:
         "estimated_delivery_time": service["estimated_delivery_time"],
         "allowlisted": service["allowlisted"],
     }
+
+
+def compute_registry_hash(services_data: Optional[dict] = None) -> str:
+    """Compute SHA-256 hash of services.json content.
+
+    Used by guard_detector.check_price_tampering to detect runtime
+    modification of the service registry.
+
+    Args:
+        services_data: Pre-loaded services dict, or None to read from file.
+
+    Returns:
+        Hex SHA-256 hash string.
+    """
+    if services_data is None:
+        services_data = load_services()
+    content = json.dumps(services_data, sort_keys=True).encode()
+    return hashlib.sha256(content).hexdigest()
