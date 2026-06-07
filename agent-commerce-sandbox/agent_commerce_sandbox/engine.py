@@ -1,322 +1,299 @@
-"""Core flow engine: orchestrates the complete agent commerce flow."""
+"""
+Core flow engine — orchestrates service discovery, payment, and delivery proof.
 
-from typing import Optional
-import uuid
+Flow:
+  1. Query ServiceRegistry contract for services
+  2. User selects a service and states intent
+  3. Submit CAW Pact for payment authorization
+  4. Wait for user to approve in CAW App
+  5. Execute CAW Transfer
+  6. Record delivery proof on-chain
+"""
 
-from .mock_services import discover_services, get_service, format_quote, compute_registry_hash, load_services
-from .policy_checker import check_policy, check_add_to_session_spent, load_policy
-from .payment_engine import execute_payment
-from .proof_logger import ProofLogger
-from .guard_detector import check_guard
-from .attack_reporter import generate_attack_report, save_attack_report
-from .cobo_client import CoboClient
-from . import chain as chain_module
+import json
+import time
+from web3 import Web3
 
-
-class HumanConfirmationResult:
-    """Simulated human confirmation gate."""
-
-    def request_confirmation(self, decision, quote) -> "HumanConfirmationResult":
-        """
-        Simulate human confirmation.
-
-        In interactive mode this would prompt the user.
-        In automated mode, returns accepted.
-        """
-        result = HumanConfirmationResult()
-        result.confirmed = True
-        result.reason = "Human reviewed and accepted (simulated)"
-        return result
+from .chain_client import ChainClient
+from .caw_client import CawClient
 
 
-def capture_registry_snapshot() -> dict:
-    """Capture a snapshot of services.json at startup for tamper detection."""
-    return load_services()
-
-
-_REGISTRY_SNAPSHOT = capture_registry_snapshot()
-
-
-def run_flow(
-    user_intent: str,
-    service_id: str,
-    scenario: str = "normal",
-    interactive: bool = False,
-    real_mode: bool = False,
-    cobo_mode: bool = False,
-) -> dict:
-    """
-    Run the complete agent commerce flow with Guard + Cobo integration.
-
-    Flow:
-      1. Discover service
-      2. Get quote
-      3. Guard check (local semantic detection)
-         → BLOCK: generate attack report, stop
-         → PASS: continue
-      4. Policy check (local, for sim mode)
-      5. Human confirmation (if required)
-      6. Payment (via Cobo API or local simulation)
-      7. Delivery
-      8. Proof log
-
-    Parameters:
-        user_intent: Natural language description
-        service_id: The service to purchase
-        scenario: 'normal', 'over_budget', 'unknown_service', or guard-* scenarios
-        interactive: If True, pause for human input at confirmation gates
-        real_mode: If True, execute real testnet payments via web3.py
-        cobo_mode: If True, use Cobo API for pact submission + transfer
+def discover_services() -> list:
+    """Discover all active services from the ServiceRegistry contract.
 
     Returns:
-        Dictionary with full proof log
+        List of formatted service dicts.
     """
-    # Step 1: Discover service
-    service = get_service(service_id)
-    if not service:
-        return {"error": f"Service '{service_id}' not found"}
-    print(f"  [Engine] Discovered: {service['name']}")
+    print("=" * 60)
+    print("  Service Discovery — On-Chain")
+    print("=" * 60)
+    print()
 
-    # Step 2: Get quote
-    quote = format_quote(service)
-    amount = float(quote["amount"])
-    print(f"  [Engine] Quote: {amount} {quote['token']} on {quote['network']}")
+    client = ChainClient()
+    services = client.list_services()
 
-    # Step 3: Guard check (always runs — local semantic detection)
-    services_data = load_services()
-    guard_result = check_guard(
-        user_intent=user_intent,
-        service_id=service["id"],
-        quote_amount=quote["amount"],
-        services_data=services_data,
-        registry_snapshot=_REGISTRY_SNAPSHOT,
-        service_name=service["name"],
-        service_description=service["description"],
-    )
+    if not services:
+        print("  No active services found on-chain.")
+        return []
 
-    print(f"  [Guard] Verdict: {guard_result.verdict.upper()} "
-          f"(risk={guard_result.risk_score:.2f})")
+    print(f"  Found {len(services)} active service(s) on Sepolia:\n")
+    for s in services:
+        price_eth = Web3.from_wei(s["priceWei"], "ether")
+        print(f"  [{s['id']}] {s['name']}")
+        print(f"        {s['description']}")
+        print(f"        {price_eth} {s['tokenId']} on {s['chainId']}")
+        print(f"        Provider: {s['provider'][:10]}...{s['provider'][-6:]}")
+        print()
 
-    # Print individual check results
-    for c in guard_result.checks:
-        status = "✅" if c.passed else "🚫"
-        print(f"  [Guard] {status} {c.name}: {c.detail[:60]}...")
+    return services
 
-    # Guard BLOCK → generate attack report, stop
-    if guard_result.verdict == "block":
-        report = generate_attack_report(
-            guard_result=guard_result,
-            user_intent=user_intent,
-            service_id=service["id"],
-            quote_amount=quote["amount"],
-        )
-        paths = save_attack_report(report)
-        print(f"  [Guard] ⛔ Attack blocked! Report saved to:")
-        print(f"          JSON: {paths['json_path']}")
-        print(f"          MD:   {paths['md_path']}")
 
-        proof_logger = ProofLogger()
-        proof = proof_logger.log_session(
-            user_intent=user_intent,
-            budget=load_policy()["session"],
-            quote=quote,
-            policy_decision={"allowed": False, "reason": f"Guard blocked: {', '.join(guard_result.blocking_reasons)}"},
-            human_confirmation=None,
-            payment_receipt=None,
-            delivery_result={
-                "status": "blocked",
-                "summary": f"Guard prevented attack: {', '.join(guard_result.blocking_reasons)}",
-            },
-            guard_evidence=guard_result.to_dict(),
-            cobo_result=None,
-        )
-        return proof
+def pay_for_service(service_id: int, user_intent: str) -> dict:
+    """Run the full payment flow for a service.
 
-    # Step 4: Check policy (local)
-    decision = check_policy(
-        service_id=service["id"],
-        amount=amount,
-        token=quote["token"],
-        network=quote["network"],
-    )
-    print(f"  [Engine] Policy: {'ALLOWED' if decision.allowed else 'DENIED'}")
+    Args:
+        service_id: Service ID from the contract
+        user_intent: Natural language description of the user's request
 
-    # Step 4b: If denied by policy, stop immediately
-    if not decision.allowed:
-        proof_logger = ProofLogger()
-        proof = proof_logger.log_session(
-            user_intent=user_intent,
-            budget=load_policy()["session"],
-            quote=quote,
-            policy_decision=decision.to_dict(),
-            human_confirmation=None,
-            payment_receipt=None,
-            delivery_result={"status": "blocked", "summary": f"Policy denied: {decision.reason}"},
-            guard_evidence=guard_result.to_dict(),
-            cobo_result=None,
-        )
-        return proof
-
-    # Step 5: Human confirmation (if required)
-    human_confirmation = None
-    if decision.human_confirmation_required:
-        print(f"  [Engine] Human confirmation required: {', '.join(decision.confirmation_reasons)}")
-        gate = HumanConfirmationResult()
-        confirm_result = gate.request_confirmation(decision, quote)
-        human_confirmation = {
-            "result": "approved" if confirm_result.confirmed else "rejected",
-            "reason": confirm_result.reason,
-            "confirmed_by": "user",
-        }
-        if not confirm_result.confirmed:
-            proof_logger = ProofLogger()
-            proof = proof_logger.log_session(
-                user_intent=user_intent,
-                budget=load_policy()["session"],
-                quote=quote,
-                policy_decision=decision.to_dict(),
-                human_confirmation=human_confirmation,
-                payment_receipt=None,
-                delivery_result={"status": "cancelled", "summary": "Human rejected the transaction"},
-                guard_evidence=guard_result.to_dict(),
-                cobo_result=None,
-            )
-            return proof
-
-    # Step 6: Execute payment (Cobo API or local sim)
-    payment_address = service.get("payment_address", "")
-    if not payment_address:
-        print(f"  [Engine] ERROR: Service '{service_id}' has no payment_address")
-        proof = proof_logger.log_session(
-            user_intent=user_intent,
-            budget=load_policy()["session"],
-            quote=quote,
-            policy_decision=decision.to_dict(),
-            human_confirmation=human_confirmation,
-            payment_receipt={"status": "blocked", "error": "missing_payment_address"},
-            delivery_result={"status": "blocked", "error": "missing_payment_address"},
-            guard_evidence=guard_result.to_dict(),
-            cobo_result=None,
-        )
-        return proof
-    to_address = payment_address
-
-    cobo = CoboClient()
-    cobo_result_dict = None
-
-    if cobo_mode:
-        if cobo.is_real:
-            print(f"  [Cobo] Real mode — submitting Pact to Cobo API...")
-        else:
-            print(f"  [Cobo] Sim mode (no COBO_API_KEY) — using mock...")
-
-        # Submit pact
-        pact = cobo.submit_pact(
-            intent=user_intent,
-            service_name=service["name"],
-            amount=quote["amount"],
-            token_id=f"BASE_{quote['token']}",
-            chain_id="BASE_ETH",
-            to_address=to_address,
-        )
-
-        if not pact.success:
-            print(f"  [Cobo] Pact submission failed: {pact.error}")
-            return {
-                "status": "error",
-                "error": f"Cobo pact failed: {pact.error}",
-                "guard_evidence": guard_result.to_dict(),
-            }
-
-        print(f"  [Cobo] Pact {pact.pact_id} — status={pact.status}")
-
-        if pact.status != "ACTIVE":
-            print(f"  [Cobo] Pact not executable (status={pact.status}) — aborting transfer")
-            return {
-                "status": "blocked",
-                "error": f"Pact status is {pact.status}, not ACTIVE",
-                "guard_evidence": guard_result.to_dict(),
-                "cobo_result": {"mode": pact.mode, "pact_id": pact.pact_id, "pact_status": pact.status},
-            }
-
-        # Execute transfer under pact
-        tx = cobo.execute_transfer(
-            pact_id=pact.pact_id,
-            to_address=to_address,
-            amount=quote["amount"],
-            token_id=f"BASE_{quote['token']}",
-            chain_id="BASE_ETH",
-        )
-
-        if not tx.success:
-            print(f"  [Cobo] Transfer failed: {tx.error}")
-            return {"status": "error", "error": f"Cobo transfer failed: {tx.error}"}
-
-        print(f"  [Cobo] Transfer {tx.transaction_id} — status={tx.status}")
-
-        # Update session spent for local policy tracking
-        check_add_to_session_spent(amount)
-
-        cobo_result_dict = {
-            "mode": tx.mode,
-            "pact_id": pact.pact_id,
-            "pact_status": pact.status,
-            "transaction_id": tx.transaction_id,
-            "status": tx.status,
-            "tx_hash": tx.tx_hash,
-        }
-
-        # Build a PaymentReceipt-like dict from Cobo result
-        payment_receipt = {
-            "receipt_id": tx.transaction_id,
-            "transaction_id": tx.transaction_id,
-            "amount": tx.amount,
-            "token_id": tx.token_id,
-            "to_address": tx.to_address,
-            "tx_hash": tx.tx_hash,
-            "mode": tx.mode,
-            "status": tx.status,
-        }
-    else:
-        # Local simulation mode (original behavior)
-        if real_mode:
-            print(f"  WARNING: Demo mode — sending quote amount {amount} as ETH (not {quote['token']}) on testnet")
-        receipt = execute_payment(
-            to_address=to_address,
-            amount=amount,
-            token=quote["token"],
-            network=quote["network"],
-            real_mode=real_mode,
-        )
-        print(f"  [Engine] Payment: {receipt.receipt_id} ({receipt.mode})")
-        payment_receipt = receipt.to_dict()
-
-        check_add_to_session_spent(amount)
-
-    # Step 7: Simulate delivery
-    delivery_result = {
-        "status": "accepted",
-        "summary": f"Service '{service['name']}' delivered {service['delivery_type']} successfully.",
+    Returns:
+        Dict with full execution summary including tx hashes and proof info.
+    """
+    result = {
+        "status": "started",
+        "service": None,
+        "pact": None,
+        "transfer": None,
+        "proof": None,
+        "error": None,
     }
 
-    # Step 8: Generate proof log
-    session_id = str(uuid.uuid4())[:8]
-    proof_logger = ProofLogger()
-    proof = proof_logger.log_session(
-        user_intent=user_intent,
-        budget=load_policy()["session"],
-        quote=quote,
-        policy_decision=decision.to_dict(),
-        human_confirmation=human_confirmation,
-        payment_receipt=payment_receipt,
-        delivery_result=delivery_result,
-        guard_evidence=guard_result.to_dict(),
-        cobo_result=cobo_result_dict,
+    print("=" * 60)
+    print("  Agent Commerce Hub — Payment Flow")
+    print("=" * 60)
+    print()
+
+    # ── Step 1: Get service from contract ─────────────────
+    print("[1/5] Querying ServiceRegistry contract...")
+    chain = ChainClient()
+
+    try:
+        service = chain.get_service(service_id)
+    except Exception as e:
+        msg = f"Service {service_id} not found on-chain: {e}"
+        print(f"  ❌ {msg}")
+        result["status"] = "failed"
+        result["error"] = msg
+        return result
+
+    if not service["active"]:
+        msg = f"Service {service_id} is deactivated"
+        print(f"  ❌ {msg}")
+        result["status"] = "failed"
+        result["error"] = msg
+        return result
+
+    price_eth = Web3.from_wei(service["priceWei"], "ether")
+    print(f"  ✅ Found: [{service['id']}] {service['name']}")
+    print(f"     Price: {price_eth} {service['tokenId']} on {service['chainId']}")
+    print(f"     Pay to: {service['paymentAddress']}")
+    result["service"] = service
+    print()
+
+    # ── Step 2: Submit CAW Pact ───────────────────────────
+    print("[2/5] Submitting CAW Pact...")
+    caw = CawClient()
+
+    service_name = service["name"]
+    amount_str = str(price_eth)
+
+    pact_intent = f"Pay {amount_str} {service['tokenId']} for {service_name}. User request: {user_intent[:200]}"
+
+    execution_plan = (
+        f"# Summary\n"
+        f"Pay for {service_name} via Cobo Agentic Wallet\n\n"
+        f"# Operations\n"
+        f"- Transfer {amount_str} {service['tokenId']} to {service['paymentAddress']} on {service['chainId']}\n\n"
+        f"# Risk Controls\n"
+        f"- Single transfer, capped at {amount_str} {service['tokenId']}"
     )
 
-    # Save proof to disk
-    proof_logger.save_receipt(proof, session_id)
-    proof_logger.save_proof_md(proof, session_id)
-    proof["session_id"] = session_id
+    import json
+    # Build policy dynamically using the service's payment address
+    payment_addr = service["paymentAddress"]
+    token_id = service["tokenId"]
+    chain_id = service["chainId"]
+    policies_json = json.dumps([{
+        "name": f"pay-{service_name.lower().replace(' ', '-')[:20]}",
+        "type": "transfer",
+        "rules": {
+            "effect": "allow",
+            "when": {
+                "chain_in": [chain_id],
+                "token_in": [{"chain_id": chain_id, "token_id": token_id}],
+                "destination_address_in": [
+                    {"chain_id": chain_id, "address": payment_addr}
+                ],
+            },
+            "deny_if": {"amount_usd_gt": "0.01"},
+        },
+    }])
 
-    return proof
+    try:
+        pact = caw.submit_pact(
+            intent=pact_intent,
+            policies_json=policies_json,
+            name=f"pay-{service_name.lower().replace(' ', '-')[:30]}",
+            execution_plan=execution_plan,
+        )
+        pact_id = pact.get("pact_id", "unknown")
+        pact_status = pact.get("status", "unknown")
+        print(f"  ✅ Pact submitted!")
+        print(f"     Pact ID: {pact_id}")
+        print(f"     Status: {pact_status}")
+        result["pact"] = pact
+
+        if pact_status in ("pending_approval", "PENDING_APPROVAL"):
+            print()
+            print("  ╔══════════════════════════════════════════════════╗")
+            print("  ║   📱 Open your Cobo Agentic Wallet App          ║")
+            print("  ║   and APPROVE the pact to continue.              ║")
+            print("  ╚══════════════════════════════════════════════════╝")
+            print()
+
+            # ── Step 3: Wait for approval ──────────────────
+            print("[3/5] Waiting for pact approval...")
+            try:
+                active_pact = caw.wait_for_pact_active(pact_id, timeout=300)
+                print(f"  ✅ Pact approved! Now ACTIVE.")
+                result["pact"] = active_pact
+            except TimeoutError:
+                msg = "Pact approval timed out. Please approve in the CAW App and try again."
+                print(f"  ❌ {msg}")
+                result["status"] = "pending_approval"
+                result["error"] = msg
+                return result
+        elif pact_status in ("active", "ACTIVE"):
+            print(f"  ✅ Pact already active.")
+        else:
+            print(f"  ⚠️  Unexpected pact status: {pact_status}")
+    except Exception as e:
+        msg = f"Pact submission failed: {e}"
+        print(f"  ❌ {msg}")
+        result["status"] = "failed"
+        result["error"] = msg
+        return result
+
+    print()
+
+    # ── Step 4: Execute Transfer ──────────────────────────
+    print("[4/5] Executing CAW Transfer...")
+
+    # Use the service's payment address as destination
+    dst_addr = service["paymentAddress"]
+    # For demo purposes, send to own wallet (limited SETH balance)
+    # In production, this would be the service provider's address
+    # dst_addr = caw.WALLET_SETH_ADDR
+
+    try:
+        tx_result = caw.execute_transfer(
+            pact_id=pact_id,
+            dst_address=dst_addr,
+            amount=amount_str,
+            token_id=service["tokenId"],
+            chain_id=service["chainId"],
+            description=f"Payment for {service_name}: {user_intent[:100]}",
+        )
+        tx_id = tx_result.get("id", "unknown")
+        tx_status = tx_result.get("status", "unknown")
+        print(f"  ✅ Transfer submitted!")
+        print(f"     Transaction ID: {tx_id}")
+        print(f"     Status: {tx_status}")
+        result["transfer"] = tx_result
+
+        # If processing, wait for completion
+        if tx_status == "Processing":
+            tx_complete = caw.wait_for_transaction_complete(tx_id, timeout=120)
+            tx_onchain_hash = tx_complete.get("transaction_hash", "")
+            print(f"     On-chain Tx: {tx_onchain_hash}")
+            result["transfer"] = tx_complete
+            result["tx_hash"] = tx_onchain_hash
+        else:
+            result["tx_hash"] = ""
+
+    except Exception as e:
+        msg = f"Transfer failed: {e}"
+        print(f"  ❌ {msg}")
+        result["status"] = "failed"
+        result["error"] = msg
+        return result
+
+    print()
+
+    # ── Step 5: Record Delivery Proof ─────────────────────
+    print("[5/5] Recording delivery proof on-chain...")
+
+    tx_hash_for_proof = result.get("tx_hash", "")
+    summary = f"Delivered {service_name} — {user_intent[:100]}"
+
+    try:
+        proof_result = chain.record_delivery(
+            service_id=service_id,
+            tx_hash=tx_hash_for_proof,
+            summary=summary,
+        )
+        result["proof"] = proof_result
+        print(f"  ✅ Delivery proof recorded on-chain!")
+
+        # Show final summary
+        print()
+        print("─" * 60)
+        print("  ✅ PAYMENT COMPLETE")
+        print("─" * 60)
+        print(f"  Service:  {service_name}")
+        print(f"  Amount:   {amount_str} {service['tokenId']}")
+        print(f"  Pact ID:  {pact_id}")
+        if tx_hash_for_proof:
+            print(f"  Tx Hash:  {tx_hash_for_proof}")
+        print(f"  Contract: {chain.contract_addr}")
+        print(f"  Proof Tx: {proof_result.get('tx_hash', 'N/A')}")
+        print()
+
+        result["status"] = "completed"
+    except Exception as e:
+        msg = f"Proof recording failed (payment succeeded): {e}"
+        print(f"  ⚠️  {msg}")
+        result["status"] = "payment_completed"
+        result["error"] = msg
+
+    return result
+
+
+def show_proofs(service_id: int = 0) -> list:
+    """Show delivery proofs from the contract.
+
+    Args:
+        service_id: If > 0, filter by service ID
+
+    Returns:
+        List of proof dicts.
+    """
+    chain = ChainClient()
+    count = chain.get_proof_count()
+
+    print(f"\n  Delivery proofs on-chain: {count} total\n")
+
+    if count == 0:
+        return []
+
+    proofs = chain.get_proofs(0, count)
+    filtered = [p for p in proofs if service_id == 0 or p["serviceId"] == service_id]
+
+    for p in filtered:
+        ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(p["timestamp"]))
+        print(f"  [{p['serviceId']}] {p['summary'][:50]}")
+        print(f"        Tx: {p['txHash'][:30]}...")
+        print(f"        Agent: {p['agent'][:10]}...")
+        print(f"        Time: {ts}")
+        print()
+
+    return filtered
