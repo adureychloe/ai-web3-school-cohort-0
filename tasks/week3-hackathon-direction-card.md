@@ -1,8 +1,7 @@
 # Week 3｜Hackathon Direction Card
 
-日期：2026-05-31
-WCB 任务：Week 3｜最低完成路径｜Hackathon Direction Card
-前置：Week 2 总交付 Proposal（Agent Commerce Sandbox）
+> 更新日期：2026-06-07  
+> 项目已从模拟原型升级为真实链上 + CAW 集成
 
 ---
 
@@ -10,93 +9,95 @@ WCB 任务：Week 3｜最低完成路径｜Hackathon Direction Card
 
 | 字段 | 内容 |
 |------|------|
-| 项目名称 | **Agent Commerce Sandbox** |
-| 一句话 tagline | 模拟 agent 从 intent → payment → proof 的完整商业闭环 |
-| 项目形态 | CLI 原型 + mermaid 流程图 + 决策日志 |
-| 当前阶段 | Week 3 — Hackathon 启动，原型搭建 |
+| **项目名称** | **Agent Commerce Hub** (原 Agent Commerce Sandbox → 升级) |
+| 一句话 tagline | Agent 通过链上合约发现服务 → CAW 支付 → 链上交付存证，实现真实的 Agentic Commerce 闭环 |
+| 项目形态 | CLI + Web UI + 部署在 Sepolia 的 Solidity 合约 + Cobo Agentic Wallet 集成 |
+| 当前阶段 | Week 4 冲刺 — 完整端到端流程已跑通，打磨 Demo 中 |
 
 ## 2. 要解决什么问题
 
-> AI agent 帮用户购买服务时，钱怎么付、谁来确认、怎么验证、失败了怎么办？
+> AI Agent 想帮用户购买服务时，如何安全地完成 **发现 → 报价 → 授权 → 支付 → 存证** 的完整流程？
 
-具体痛点：
-- 用户不想每次小额付款都亲自签名交易，但又怕 agent 超预算或付错人
-- Agent 能理解任务，但没法"签合同、付钱、拿收据"
-- 现有方案要么太松（直接给 API Key），要么太紧（每次确认，无法自动化）
-- x402、EIP-3009、ERC-8004 等新标准没有可演示的集成环境
+痛点：
+- 用户想给 Agent 花钱权限，但怕超支、付错人、被 prompt injection 欺骗
+- Agent 能理解任务，但缺乏在链上发现服务、自主发起支付、记录交付证明的能力
+- 现有方案要么给全量 API Key（太危险），要么次次手动签名（无法自动化）
+- Cobo Agentic Wallet 提供了 Pact 授权模型，但缺少一个完整的「服务发现→支付→交付」Demo
 
 ## 3. 解决方案
 
-一个 **最小验证环境**，模拟 agent commerce 的完整流程：
+**Agent Commerce Hub** — Agent 通过链上合约发现服务 → 创建 CAW Pact 获取有限支付授权 → 执行 Transfer → 记录交付存证回链上：
 
 ```
-User Intent → Service Discovery → Quote (x402) → Policy Check →
-Human Confirmation (高风险时) → Payment Simulation (x402/EIP-3009 mock) →
-Service Delivery → Acceptance Check → Proof Log
+ServiceRegistry.sol (Sepolia)
+       ↓ Agent 查询合约获取服务列表+报价
+CLI (run.py) / Web UI
+       ↓ Agent 创建 CAW Pact
+CAW Pact → 手机 App 批准
+       ↓ CAW 执行链上 Transfer
+链上交易确认
+       ↓ Agent 调用合约 recordDelivery()
+交付 Hash 写入链上存证
 ```
 
-特点是：
-- **不接触真实资金** — 所有支付是模拟的，安全边界验证
-- **不持有私钥** — 不存在热钱包风险
-- **可演示** — 跑一遍 CLI 就能看到整个流程和决策输出
-- **可攻击** — 内置超预算、未知服务、prompt injection 等测试用例
+**核心特点：**
+- ✅ **真实链上交互** — ServiceRegistry.sol 已部署到 Sepolia
+- ✅ **真实 CAW 支付** — 通过 Cobo Agentic Wallet Pact + Transfer 完成
+- ✅ **动态 Policy** — Pact policy 从合约字段动态生成，限制支付对象和金额
+- ✅ **端到端已跑通** — 合约查询 → Pact → 批准 → Transfer → 链上证（tx: `0x9b8a70db...a4aedf`）
+- ✅ **实时可忽略攻击** — 防 prompt injection 的 Guard 层在 Pact 提交前拦截
 
 ## 4. Target User
 
-- AI × Web3 School 同学：想理解 x402 / agent wallet / policy 如何工作
-- Hackathon 参赛者：需要一个可演示的 demo 原型
-- 产品学习者：想理解 agent commerce 的最小闭环长什么样
+- AI Agent 开发者：需要一个即开即用的「Agent 如何安全支付」参考实现
+- Cobo Agentic Wallet 用户：展示 Pact 在真实场景中的运作
+- Hackathon 评委：展示 Agent 商业闭环 + 风险边界 + CAW 集成完整度
 
 ## 5. 关键组件
 
-| 组件 | 说明 | 文件/形态 |
-|------|------|-----------|
-| services.json | 模拟服务列表，含名称、价格、交付物 | 配置文件 |
-| policy.json | 预算、allowlist、单笔限额、操作规则 | 配置文件 |
-| Mock 402 Endpoint | 服务返回报价（静态模拟） | 本地模拟 |
-| Policy Check Engine | 检查是否允许执行 | 逻辑核心 |
-| Human Confirmation Gate | 新服务/超额时暂停 | 交互流程 |
-| Payment Simulator | 模拟 x402 / EIP-3009 支付 | 模拟输出 |
-| receipt.json | 每次交易的完整记录 | JSON 输出 |
-| proof.md | 可读的 proof-of-work 摘要 | 输出文件 |
+| 组件 | 说明 | 状态 |
+|------|------|------|
+| `contracts/ServiceRegistry.sol` | 链上服务注册合约，支持 register / listServices / getService / recordDelivery | ✅ 已部署 Sepolia |
+| `agent_commerce_sandbox/caw_client.py` | Python 封装 `caw` CLI：Pact 提交、Transfer 执行、状态轮询 | ✅ 已实现 |
+| `agent_commerce_sandbox/chain_client.py` | web3.py 封装合约交互：服务发现、交付存证 | ✅ 已实现 |
+| `agent_commerce_sandbox/engine.py` | 核心编排：5 步流程（发现→Pact→等待→转账→存证） | ✅ 已实现 |
+| `run.py` | CLI 入口：discover / pay / proof / status 命令 | ✅ 已实现 |
+| `web/app.py + index.html` | FastAPI + 暗色终端主题 Web 界面 | ✅ 已实现 |
+| Guard 安全层 | Pact 提交前的 Prompt Injection / 地址篡改检测 | 🚧 集成中 |
 
 ## 6. Tech Stack
 
-- **语言**：Python 3（轻量，无额外框架）
-- **存储**：本地 JSON 文件（simulation mode）
-- **无**：数据库、区块链节点、钱包、智能合约
-- **未来可扩展**：真实 x402 SDK、CAW / Safe 集成
+| 层 | 技术 |
+|----|------|
+| 合约层 | Solidity 0.8.20 → Sepolia (chain_id: 11155111) |
+| 支付层 | Cobo Agentic Wallet — `caw` CLI (Pact → Transfer) |
+| 客户端 | Python 3.11 + web3.py + FastAPI |
+| 前端 | 原生 HTML/CSS/JS → 暗色终端风格 |
+| 钱包 | CAW Agent: Hermes (0x9e0131...) + EOA 部署钱包 |
+| 代码 | GitHub: `github.com/adureychloe/ai-web3-school-cohort-0` |
 
 ## 7. AI × Web3 交叉点
 
-| 环节 | AI 做什么 | Web3 / 协议做什么 |
+| 环节 | AI 做什么 | Web3 / CAW 做什么 |
 |------|----------|------------------|
-| Intent | 理解"帮我买份研究资料"→ 结构化任务 | — |
-| Discovery | 匹配 services.json 中的服务 | ERC-8004（未来） |
-| Quote | 比较报价和交付条件 | x402 / HTTP 402 |
-| Policy Check | 解释风险，生成决策摘要 | wallet policy / guard |
-| Payment | 发起模拟付款 | EIP-3009（未来） |
-| Receipt | 生成可读的交付摘要 | proof log / receipt hash |
-| Dispute | 判断交付是否符合预期 | 争议记录（未来） |
+| Intent | 解析用户目标（procurement agent 即将加入） | — |
+| Service Discovery | 匹配语义→选择最佳服务 | ServiceRegistry.sol 链上查询 |
+| Authorization | 解释风险→生成 Pact 草案 | CAW Pact 策略创建 |
+| Payment | 自动发起支付流程 | CAW Transfer → 链上确认 |
+| Proof | 生成交付摘要 | ServiceRegistry.recordDelivery() 存证 |
+| Security | Guard 层检测 prompt injection | CAW 链上 Policy 强制执行 |
 
 ## 8. 为什么它不是纯 AI 或纯 Web3
 
-- **纯 AI**：可以做 intent parsing 和 risk explanation，但钱不能只听一句话就付出去
-- **纯 Web3**：可以做转账和签名验证，但不会理解用户到底想买什么
-- **交叉点**：AI 帮用户做商业决策和理解，Web3 帮用户做权限边界和可验证记录
+- **纯 AI**：可以解析意图和做决策，但不能安全地执行链上支付
+- **纯 Web3**：可以转账和存证，但不会理解用户到底需要什么服务
+- **交叉点**：AI 负责商业决策和安全检查，CAW 负责受权的资金执行，合约负责不可篡改的记录
 
 ## 9. 成功标准
 
-- [ ] CLI 运行一次能看到完整流程
-- [ ] 三种场景演示：正常支付、超预算拒绝、未知服务拦截
-- [ ] 每次运行产出 receipt.json + proof.md
-- [ ] mermaid 流程图与代码流程一致
-- [ ] Week 4 可以展示给 mentor 和同学
-
-## 10. 风险提示
-
-| 风险 | 缓解 |
-|------|------|
-| Week 3 只有 1 小时/天 | 先做核心闭环（intent → payment），不做 UI |
-| 模拟环境无法演示真实 x402 | 在代码注释中标注"此处可替换为真实 x402 SDK" |
-| 项目太抽象难以演示 | 准备 3 个固定测试场景，跑一次 CLI 就能看到 |
+- [x] CLI 能完整跑通: `discover` → `pay` → `proof`
+- [x] CAW Pact 创建 → 手机批准 → Transfer → 链上确认
+- [x] 交付 proof 写入 Sepolia 合约
+- [x] Web UI 可展示全流程
+- [ ] Demo 视频录制（3-5 分钟）
+- [ ] README 完整更新
