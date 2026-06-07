@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Commerce Hub</title>
+<style>
+:root { --bg:#06080d; --panel:#0c121c; --panel2:#101a28; --line:rgba(91,255,199,.24); --text:#e8fff7; --muted:#92a5b1; --green:#5bffc7; --cyan:#65d8ff; --yellow:#ffd166; --red:#ff6b7a; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color-scheme:dark; }
+* { box-sizing:border-box }
+body { margin:0; min-height:100vh; color:var(--text); background:radial-gradient(circle at 15% 10%,rgba(91,255,199,.16),transparent 34rem),radial-gradient(circle at 90% 0,rgba(101,216,255,.12),transparent 30rem),var(--bg); }
+body:before { content:""; position:fixed; inset:0; pointer-events:none; background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px); background-size:34px 34px; }
+.shell { width:min(1180px,calc(100% - 32px)); margin:auto; padding:26px 0 46px; position:relative; }
+header { display:flex; justify-content:space-between; gap:18px; align-items:center; padding:20px; border:1px solid var(--line); border-radius:20px; background:rgba(12,18,28,.88); box-shadow:0 20px 70px rgba(0,0,0,.35); position:sticky; top:12px; z-index:5; backdrop-filter:blur(12px); }
+.brand { display:flex; gap:14px; align-items:center; min-width:0 }
+.logo { width:50px; height:50px; border-radius:15px; display:grid; place-items:center; background:linear-gradient(135deg,var(--green),var(--cyan)); color:#00130d; font-weight:900; box-shadow:0 0 32px rgba(91,255,199,.32); }
+h1 { margin:0; font-size:clamp(1.3rem,2.5vw,2rem); letter-spacing:-.04em }
+.subtitle { color:var(--muted); margin-top:5px; font-size:.88rem }
+.statusbar { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end }
+.chip { border:1px solid rgba(255,255,255,.1); border-radius:999px; padding:7px 10px; background:rgba(255,255,255,.04); color:var(--muted); font-size:.78rem }
+.chip.ok { color:var(--green); border-color:rgba(91,255,199,.42) } .chip.warn { color:var(--yellow); border-color:rgba(255,209,102,.38) }
+.tabs { display:flex; gap:10px; margin:22px 0; padding-bottom:10px; border-bottom:1px solid rgba(255,255,255,.09) }
+.tab,.ghost { font:inherit; cursor:pointer; border:1px solid rgba(255,255,255,.12); border-radius:999px; color:var(--muted); background:rgba(255,255,255,.04); padding:10px 15px }
+.tab.active,.tab:hover,.ghost:hover { color:var(--green); border-color:rgba(91,255,199,.5); background:rgba(91,255,199,.08) }
+.grid { display:grid; grid-template-columns:minmax(0,1.08fr) minmax(320px,.92fr); gap:18px; align-items:start }
+.cards { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px }
+.card,.panel { border:1px solid rgba(255,255,255,.1); border-radius:20px; background:rgba(12,18,28,.9); box-shadow:0 18px 60px rgba(0,0,0,.3) }
+.card { min-height:230px; padding:17px; cursor:pointer; transition:.16s ease; overflow:hidden; position:relative }
+.card:hover,.card.selected { transform:translateY(-3px); border-color:rgba(91,255,199,.55); background:rgba(16,26,40,.95) }
+.card-top { display:flex; justify-content:space-between; gap:8px; color:var(--cyan); font-size:.78rem }
+.service-name { margin:14px 0 10px; font-size:1.08rem; line-height:1.25 }
+.desc { color:var(--muted); line-height:1.5; font-size:.88rem }
+.price { margin-top:18px; color:var(--green); font-weight:900 }
+.addr { margin-top:12px; color:#6f8290; overflow-wrap:anywhere; font-size:.74rem }
+.panel { padding:18px } .panel h2 { margin:0 0 8px } .panel p { color:var(--muted); line-height:1.55 }
+label { display:block; color:var(--cyan); margin:18px 0 8px; font-size:.82rem }
+textarea { width:100%; min-height:120px; resize:vertical; border-radius:14px; border:1px solid rgba(255,255,255,.12); background:rgba(0,0,0,.28); color:var(--text); padding:13px; font:inherit; outline:none }
+textarea:focus { border-color:rgba(91,255,199,.55); box-shadow:0 0 0 3px rgba(91,255,199,.08) }
+.actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:14px }
+.primary { border:0; border-radius:14px; padding:12px 16px; min-width:150px; color:#00130d; background:linear-gradient(135deg,var(--green),var(--cyan)); font:inherit; font-weight:900; cursor:pointer }
+.primary:disabled { opacity:.55; cursor:not-allowed }
+.hint,.empty { color:var(--muted); font-size:.82rem }
+.log { margin-top:16px; border:1px solid rgba(91,255,199,.18); border-radius:15px; background:rgba(0,0,0,.28); padding:12px; max-height:315px; overflow:auto }
+.log-line { display:grid; grid-template-columns:82px 1fr; gap:10px; padding:7px 0; border-bottom:1px dashed rgba(255,255,255,.07) }
+.log-line:last-child { border-bottom:0 } .time { color:#637583; font-size:.75rem } .msg { font-size:.84rem; line-height:1.45 } .good { color:var(--green) } .warn { color:var(--yellow) } .bad { color:var(--red) }
+.toolbar { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:14px }
+table { width:100%; border-collapse:collapse } th,td { text-align:left; border-bottom:1px solid rgba(255,255,255,.09); padding:12px 10px; vertical-align:top; line-height:1.45 } th { color:var(--cyan); font-size:.78rem } td { color:var(--muted); font-size:.84rem } td strong { color:var(--text) } .mono { overflow-wrap:anywhere }
+.empty { border:1px dashed rgba(255,255,255,.12); border-radius:16px; padding:22px; background:rgba(255,255,255,.025) }
+.loader { display:inline-block; width:11px; height:11px; border:2px solid rgba(91,255,199,.24); border-top-color:var(--green); border-radius:50%; animation:spin .85s linear infinite; margin-right:8px; vertical-align:-1px } @keyframes spin { to { transform:rotate(360deg) } }
+.hidden { display:none!important }
+@media (max-width:980px) { header { position:static; flex-direction:column; align-items:flex-start } .statusbar { justify-content:flex-start } .grid { grid-template-columns:1fr } .cards { grid-template-columns:1fr } .card { min-height:auto } }
+@media (max-width:620px) { .shell { width:min(100% - 20px,1180px); padding-top:10px } header,.panel { padding:14px; border-radius:16px } .toolbar { align-items:flex-start; flex-direction:column } table,thead,tbody,th,td,tr { display:block } thead { display:none } tr { border:1px solid rgba(255,255,255,.1); border-radius:14px; margin-bottom:10px; padding:6px } td { border-bottom:0; padding:7px 8px } td:before { content:attr(data-label); display:block; color:var(--cyan); font-size:.7rem } }
+</style>
+</head>
+
+<body>
+<main class="shell">
+<header>
+  <div class="brand"><div class="logo">ACH</div><div><h1>Agent Commerce Hub</h1><div class="subtitle">On-chain service discovery × CAW payments × delivery proofs</div></div></div>
+  <div id="statusbar" class="statusbar"><span class="chip warn"><span class="loader"></span>checking status</span></div>
+</header>
+<nav class="tabs" aria-label="Sections"><button class="tab active" id="servicesTab" type="button">Services</button><button class="tab" id="proofsTab" type="button">Proofs</button></nav>
+<section id="servicesView"><div class="grid"><div><div id="serviceCards" class="cards"><div class="empty"><span class="loader"></span>Discovering services on Sepolia...</div></div></div>
+<aside class="panel" id="paymentPanel"><h2>Select a service</h2><p>Choose a card to open payment. The Pay button submits a CAW pact, waits for approval, sends the transfer, and records delivery proof.</p>
+<div id="paymentBody" class="hidden"><p id="selectedMeta"></p><label for="intent">Intent</label><textarea id="intent" placeholder="Describe what you want the provider agent to do..."></textarea><div class="actions"><button id="payButton" class="primary" type="button">Pay with CAW</button><span class="hint">Keep this tab open while CAW approval is pending.</span></div></div>
+<div class="log" id="log" aria-live="polite"><div class="log-line"><span class="time">ready</span><span class="msg">Terminal log initialized.</span></div></div></aside></div></section>
+<section id="proofsView" class="hidden"><div class="panel"><div class="toolbar"><div><h2>Delivery proofs</h2><p>Records returned by ServiceRegistry on Sepolia.</p></div><button class="ghost" id="refreshProofs" type="button">Refresh proofs</button></div><div id="proofsTable" class="empty"><span class="loader"></span>Loading proofs...</div></div></section>
+</main>
+<script>
+
+const state = { services: [], proofs: [], selected: null, paying: false, waitTimer: null, pactPollTimer: null, lastPactStatus: "" };
+const el = (id) => document.getElementById(id);
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;");
+}
+function short(value, head = 10, tail = 6) {
+  const text = String(value || "");
+  if (text.length <= head + tail + 3) return text;
+  return `${text.slice(0, head)}...${text.slice(-tail)}`;
+}
+function formatEth(weiValue) {
+  try {
+    const wei = BigInt(String(weiValue || 0));
+    const whole = wei / 1000000000000000000n;
+    const frac = (wei % 1000000000000000000n).toString().padStart(18, "0").replace(/0+$/, "");
+    return frac ? `${whole}.${frac.slice(0, 8)}` : String(whole);
+  } catch (err) { return String(weiValue || "0"); }
+}
+function now() { return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
+function log(message, kind = "") {
+  const row = document.createElement("div");
+  row.className = "log-line";
+  row.innerHTML = `<span class="time">${now()}</span><span class="msg ${kind}">${escapeHtml(message)}</span>`;
+  el("log").appendChild(row);
+  el("log").scrollTop = el("log").scrollHeight;
+}
+function resetLog() { el("log").innerHTML = ""; }
+async function api(path, options = {}) {
+  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (err) { data = text; }
+  if (!res.ok) {
+    const detail = data && data.detail ? data.detail : text || res.statusText;
+    throw new Error(detail);
+  }
+  return data;
+}
+function renderStatus(data) {
+  const walletClass = data.wallet_healthy ? "ok" : "warn";
+  const walletText = data.wallet_healthy ? "wallet healthy" : "wallet not healthy";
+  el("statusbar").innerHTML = `
+    <span class="chip ${walletClass}">${walletText}</span>
+    <span class="chip">services ${escapeHtml(data.service_count ?? 0)}</span>
+    <span class="chip">proofs ${escapeHtml(data.proof_count ?? 0)}</span>
+    <span class="chip" title="${escapeHtml(data.contract_address || "")}">contract ${escapeHtml(short(data.contract_address || "unknown"))}</span>`;
+}
+async function loadStatus() {
+  try { renderStatus(await api("/api/status")); }
+  catch (err) { el("statusbar").innerHTML = `<span class="chip warn">status error: ${escapeHtml(err.message)}</span>`; }
+}
+
+function renderServices() {
+  const host = el("serviceCards");
+  if (!state.services.length) { host.innerHTML = `<div class="empty">No active services found on-chain.</div>`; return; }
+  host.innerHTML = state.services.slice(0, 3).map((svc) => {
+    const selected = state.selected && Number(state.selected.id) === Number(svc.id) ? " selected" : "";
+    const price = `${formatEth(svc.priceWei)} ${svc.tokenId || "SETH"}`;
+    return `<article class="card${selected}" tabindex="0" role="button" data-service-id="${escapeHtml(svc.id)}">
+      <div class="card-top"><span>service #${escapeHtml(svc.id)}</span><span>${escapeHtml(svc.chainId || "SETH")}</span></div>
+      <h3 class="service-name">${escapeHtml(svc.name)}</h3>
+      <div class="desc">${escapeHtml(svc.description)}</div>
+      <div class="price">${escapeHtml(price)}</div>
+      <div class="addr">provider ${escapeHtml(short(svc.provider || svc.paymentAddress || ""))}</div>
+    </article>`;
+  }).join("");
+  host.querySelectorAll(".card").forEach((card) => {
+    const choose = () => selectService(Number(card.dataset.serviceId));
+    card.addEventListener("click", choose);
+    card.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose(); } });
+  });
+}
+function selectService(id) {
+  state.selected = state.services.find((svc) => Number(svc.id) === Number(id));
+  renderServices();
+  if (!state.selected) return;
+  const svc = state.selected;
+  el("paymentPanel").querySelector("h2").textContent = svc.name;
+  el("selectedMeta").innerHTML = `${escapeHtml(svc.description)}<br><strong style="color:var(--green)">${escapeHtml(formatEth(svc.priceWei))} ${escapeHtml(svc.tokenId || "SETH")}</strong><br><span class="mono">pay to ${escapeHtml(svc.paymentAddress || "")}</span>`;
+  el("intent").value = `Purchase ${svc.name} for: `;
+  el("paymentBody").classList.remove("hidden");
+  resetLog();
+  log(`Selected service #${svc.id}: ${svc.name}`, "good");
+}
+async function loadServices() {
+  const host = el("serviceCards");
+  host.innerHTML = `<div class="empty"><span class="loader"></span>Discovering services on Sepolia...</div>`;
+  try {
+    state.services = await api("/api/services");
+    renderServices();
+    if (state.services.length && !state.selected) selectService(state.services[0].id);
+  } catch (err) {
+    host.innerHTML = `<div class="empty">Service discovery failed: ${escapeHtml(err.message)}</div>`;
+    log(`Service discovery failed: ${err.message}`, "bad");
+  }
+}
+function proofRows(proofs) {
+  return proofs.map((proof) => {
+    const date = proof.timestamp ? new Date(Number(proof.timestamp) * 1000).toLocaleString() : "unknown";
+    return `<tr><td data-label="Service"><strong>#${escapeHtml(proof.serviceId)}</strong></td><td data-label="Summary">${escapeHtml(proof.summary || "")}</td><td data-label="Payment Tx" class="mono">${escapeHtml(proof.txHash || "")}</td><td data-label="Agent" class="mono">${escapeHtml(short(proof.agent || "", 12, 8))}</td><td data-label="Time">${escapeHtml(date)}</td></tr>`;
+  }).join("");
+}
+function renderProofs() {
+  const host = el("proofsTable");
+  if (!state.proofs.length) { host.className = "empty"; host.innerHTML = "No delivery proofs recorded yet."; return; }
+  host.className = "";
+  host.innerHTML = `<table><thead><tr><th>Service</th><th>Summary</th><th>Payment Tx</th><th>Agent</th><th>Time</th></tr></thead><tbody>${proofRows(state.proofs)}</tbody></table>`;
+}
+async function loadProofs() {
+  const host = el("proofsTable");
+  host.className = "empty";
+  host.innerHTML = `<span class="loader"></span>Loading proofs...`;
+  try { state.proofs = await api("/api/proofs"); renderProofs(); }
+  catch (err) { host.innerHTML = `Proof loading failed: ${escapeHtml(err.message)}`; }
+}
+
+function extractPactId(result) {
+  const pact = result && result.pact ? result.pact : null;
+  return pact && (pact.pact_id || pact.id || pact.uuid) ? (pact.pact_id || pact.id || pact.uuid) : "";
+}
+function startWaitingHeartbeat() {
+  let ticks = 0;
+  state.waitTimer = setInterval(() => {
+    ticks += 1;
+    log(`Waiting for approval in CAW app... poll ${ticks}`, "warn");
+  }, 3000);
+}
+function stopTimers() {
+  if (state.waitTimer) clearInterval(state.waitTimer);
+  if (state.pactPollTimer) clearInterval(state.pactPollTimer);
+  state.waitTimer = null;
+  state.pactPollTimer = null;
+}
+function pollPact(pactId) {
+  if (!pactId) return;
+  state.pactPollTimer = setInterval(async () => {
+    try {
+      const info = await api(`/api/pact/${encodeURIComponent(pactId)}/status`);
+      if (info.status !== state.lastPactStatus) {
+        state.lastPactStatus = info.status;
+        log(`Pact ${short(pactId)} status: ${info.status}`, String(info.status).toLowerCase() === "active" ? "good" : "warn");
+      }
+      if (String(info.status).toLowerCase() === "active") { clearInterval(state.pactPollTimer); state.pactPollTimer = null; }
+    } catch (err) { log(`Pact status check failed: ${err.message}`, "bad"); }
+  }, 3000);
+}
+async function paySelected() {
+  if (!state.selected || state.paying) return;
+  state.paying = true;
+  el("payButton").disabled = true;
+  resetLog();
+  log("Pact submitted: creating CAW authorization request...");
+  log("Waiting for approval: polling every 3s while the server advances the flow", "warn");
+  startWaitingHeartbeat();
+  try {
+    const result = await api("/api/pay", { method: "POST", body: JSON.stringify({ service_id: Number(state.selected.id), intent: el("intent").value.trim() }) });
+    stopTimers();
+    const pactId = extractPactId(result);
+    if (pactId) {
+      log(`Pact submitted: ${pactId}`, "good");
+      if (String(result.status).toLowerCase() === "pending_approval") pollPact(pactId);
+    }
+    if (result.error) log(result.error, result.status === "failed" ? "bad" : "warn");
+    if (result.transfer) log(`Transfer sent: ${result.tx_hash || result.transfer.transaction_hash || result.transfer.id || "submitted"}`, "good");
+    if (result.proof) log(`Delivery recorded: proof tx ${result.proof.tx_hash || "recorded"}`, "good");
+    log(`Payment flow status: ${result.status}`, result.status === "completed" ? "good" : "warn");
+    await loadStatus();
+    await loadProofs();
+  } catch (err) {
+    stopTimers();
+    log(`Payment failed: ${err.message}`, "bad");
+  } finally {
+    state.paying = false;
+    el("payButton").disabled = false;
+  }
+}
+function switchTab(name) {
+  const services = name === "services";
+  el("servicesView").classList.toggle("hidden", !services);
+  el("proofsView").classList.toggle("hidden", services);
+  el("servicesTab").classList.toggle("active", services);
+  el("proofsTab").classList.toggle("active", !services);
+  if (!services) loadProofs();
+}
+el("servicesTab").addEventListener("click", () => switchTab("services"));
+el("proofsTab").addEventListener("click", () => switchTab("proofs"));
+el("refreshProofs").addEventListener("click", loadProofs);
+el("payButton").addEventListener("click", paySelected);
+loadStatus();
+loadServices();
+loadProofs();
+setInterval(loadStatus, 30000);
+</script>
+</body>
+</html>
