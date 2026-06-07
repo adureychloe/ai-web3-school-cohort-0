@@ -11,52 +11,32 @@ contract ServiceRegistry {
         uint256 id;
         string name;
         string description;
-        address paymentAddress;   // service provider's wallet
-        uint256 priceWei;         // price in the smallest unit of the payment token
-        string tokenId;           // e.g. "SETH", "BASE_USDC"
-        string chainId;           // e.g. "SETH", "BASE_ETH"
+        address paymentAddress;
+        uint256 priceWei;
+        string tokenId;
+        string chainId;
         bool active;
         address provider;
     }
 
     struct DeliveryProof {
         uint256 serviceId;
-        string txHash;           // CAW transfer transaction hash
-        string summary;          // brief description of what was delivered
+        string txHash;
+        string summary;
         uint256 timestamp;
         address agent;
     }
-
-    // ── State ──────────────────────────────────────────────
 
     address public owner;
     uint256 private _nextServiceId;
 
     mapping(uint256 => Service) private _services;
     uint256[] private _serviceIds;
-
     DeliveryProof[] private _deliveryProofs;
 
-    // ── Events ─────────────────────────────────────────────
-
-    event ServiceRegistered(
-        uint256 indexed id,
-        string name,
-        uint256 priceWei,
-        string tokenId,
-        string chainId,
-        address paymentAddress,
-        address indexed provider
-    );
-
+    event ServiceRegistered(uint256 indexed id, string name, uint256 priceWei, address indexed provider);
     event ServiceDeactivated(uint256 indexed id);
-
-    event DeliveryRecorded(
-        uint256 indexed serviceId,
-        string txHash,
-        string summary,
-        address indexed agent
-    );
+    event DeliveryRecorded(uint256 indexed serviceId, string txHash, address indexed agent);
 
     // ── Modifiers ──────────────────────────────────────────
 
@@ -101,7 +81,7 @@ contract ServiceRegistry {
         });
         _serviceIds.push(id);
 
-        emit ServiceRegistered(id, _name, _priceWei, _tokenId, _chainId, _paymentAddress, msg.sender);
+        emit ServiceRegistered(id, _name, _priceWei, msg.sender);
         return id;
     }
 
@@ -129,7 +109,7 @@ contract ServiceRegistry {
             agent: msg.sender
         }));
 
-        emit DeliveryRecorded(_serviceId, _txHash, _summary, msg.sender);
+        emit DeliveryRecorded(_serviceId, _txHash, msg.sender);
     }
 
     // ── Read Functions ─────────────────────────────────────
