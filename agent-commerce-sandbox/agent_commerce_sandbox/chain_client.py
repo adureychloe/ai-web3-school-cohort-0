@@ -7,8 +7,17 @@ and provides methods for service discovery and delivery proof recording.
 
 import json
 import os
+import sys
 import time
 from pathlib import Path
+
+
+def _log(msg: str):
+    """Safe log that doesn't crash in asyncio thread contexts."""
+    try:
+        print(msg, file=sys.stderr, flush=True)
+    except (BrokenPipeError, OSError, ValueError):
+        pass
 
 
 # ── Paths ─────────────────────────────────────────────────────
@@ -41,7 +50,7 @@ def _connect_web3() -> tuple:
         request_kwargs={"timeout": 30}
     ))
     chain_id = w3.eth.chain_id
-    print(f"  [Chain] Connected to Sepolia (chain_id={chain_id})")
+    _log(f"  [Chain] Connected to Sepolia (chain_id={chain_id})")
     return w3, chain_id
 
 
@@ -62,7 +71,7 @@ def _load_contract(w3):
 
     addr = deploy_info["contract_address"]
     contract = w3.eth.contract(address=addr, abi=abi)
-    print(f"  [Chain] Loaded ServiceRegistry at {addr}")
+    _log(f"  [Chain] Loaded ServiceRegistry at {addr}")
     return contract, addr
 
 
@@ -179,7 +188,7 @@ class ChainClient:
         raw_tx = self.w3.eth.send_raw_transaction(signed.raw_transaction)
         tx_hex = raw_tx.hex()
 
-        print(f"  [Chain] Recording delivery tx={tx_hex[:20]}... waiting...")
+        _log(f"  [Chain] Recording delivery tx={tx_hex[:20]}... waiting...")
         receipt = self.w3.eth.wait_for_transaction_receipt(raw_tx, timeout=120)
 
         result = {
@@ -188,9 +197,9 @@ class ChainClient:
             "status": receipt["status"],
         }
         if receipt["status"] == 1:
-            print(f"  [Chain] ✅ Delivery recorded (block={receipt['blockNumber']})")
+            _log(f"  [Chain] Delivery recorded (block={receipt['blockNumber']})")
         else:
-            print(f"  [Chain] ❌ Delivery recording failed")
+            _log(f"  [Chain] Delivery recording failed")
         return result
 
     def format_service(self, s: dict) -> str:

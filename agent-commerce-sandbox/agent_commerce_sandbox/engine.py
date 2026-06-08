@@ -134,7 +134,7 @@ def pay_for_service(service_id: int, user_intent: str) -> dict:
                     {"chain_id": chain_id, "address": payment_addr}
                 ],
             },
-            "deny_if": {"amount_usd_gt": "0.01"},
+            "deny_if": {"amount_usd_gt": "5.00"},
         },
     }])
 

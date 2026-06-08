@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from agent_commerce_sandbox.engine import discover_services, pay_for_service, show_proofs
 from agent_commerce_sandbox.caw_client import CawClient
+from agent_commerce_sandbox.procurement_agent import procure
 
 BANNER = """
 ╔══════════════════════════════════════════╗
@@ -32,6 +33,7 @@ def print_usage():
     print('  pay <id> ["intent"]   Pay for a service (intent optional)')
     print("  proof [id]            Show delivery proofs")
     print("  status                Show wallet + contract info")
+    print('  procure ["request"]   Natural language service procurement')
     print()
 
 
@@ -100,6 +102,18 @@ def cmd_status():
     print()
 
 
+def cmd_procure(request_text: str = ""):
+    if not request_text:
+        try:
+            request_text = input("  What do you need? > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            request_text = ""
+    if not request_text:
+        print("  Cancelled.")
+        return
+    procure(request_text)
+
+
 def main():
     print(BANNER)
 
@@ -130,6 +144,10 @@ def main():
     elif cmd == "proof":
         service_id = int(args[1]) if len(args) >= 2 else 0
         cmd_proof(service_id)
+
+    elif cmd == "procure":
+        request = args[1] if len(args) >= 2 else ""
+        cmd_procure(request)
 
     elif cmd == "status":
         cmd_status()

@@ -47,6 +47,27 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
 .empty { border:1px dashed rgba(255,255,255,.12); border-radius:16px; padding:22px; background:rgba(255,255,255,.025) }
 .loader { display:inline-block; width:11px; height:11px; border:2px solid rgba(91,255,199,.24); border-top-color:var(--green); border-radius:50%; animation:spin .85s linear infinite; margin-right:8px; vertical-align:-1px } @keyframes spin { to { transform:rotate(360deg) } }
 .hidden { display:none!important }
+.search-row { display:flex; gap:10px; margin-bottom:16px; align-items:center }
+.search-input { flex:1; border-radius:14px; border:1px solid rgba(255,255,255,.12); background:rgba(0,0,0,.28); color:var(--text); padding:12px 14px; font:inherit; outline:none; font-size:.95rem }
+.search-input:focus { border-color:rgba(91,255,199,.55); box-shadow:0 0 0 3px rgba(91,255,199,.08) }
+.search-btn { border:0; border-radius:14px; padding:12px 16px; color:#00130d; background:linear-gradient(135deg,var(--green),var(--cyan)); font:inherit; font-weight:900; cursor:pointer; white-space:nowrap }
+.search-btn:disabled { opacity:.55; cursor:not-allowed }
+.match-badge { display:inline-block; border-radius:999px; padding:2px 8px; font-size:.7rem; background:rgba(101,216,255,.15); color:var(--cyan) }
+.match-badge.high { background:rgba(91,255,199,.18); color:var(--green) }
+.bal-chip { color:var(--green); font-size:.78rem }
+.result-panel { text-align:center; padding:10px 0 }
+.result-icon { font-size:3rem; line-height:1.2; margin-bottom:6px }
+.result-title { font-size:1.15rem; font-weight:900; margin-bottom:16px }
+.result-details { text-align:left; border:1px solid rgba(255,255,255,.09); border-radius:14px; padding:14px; margin-bottom:14px; background:rgba(0,0,0,.15) }
+.result-row { display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid rgba(255,255,255,.06); font-size:.84rem; line-height:1.45 }
+.result-row:last-child { border-bottom:0 }
+.result-row .label { color:var(--cyan); white-space:nowrap }
+.result-row .value { color:var(--text); text-align:right; overflow-wrap:anywhere; max-width:65% }
+.result-row .value.good { color:var(--green) }
+.result-row .value.warn { color:var(--yellow) }
+.result-row .value.bad { color:var(--red) }
+.explorer-link { color:var(--cyan); text-decoration:underline; cursor:pointer }
+.explorer-link:hover { color:var(--green) }
 @media (max-width:980px) { header { position:static; flex-direction:column; align-items:flex-start } .statusbar { justify-content:flex-start } .grid { grid-template-columns:1fr } .cards { grid-template-columns:1fr } .card { min-height:auto } }
 @media (max-width:620px) { .shell { width:min(100% - 20px,1180px); padding-top:10px } header,.panel { padding:14px; border-radius:16px } .toolbar { align-items:flex-start; flex-direction:column } table,thead,tbody,th,td,tr { display:block } thead { display:none } tr { border:1px solid rgba(255,255,255,.1); border-radius:14px; margin-bottom:10px; padding:6px } td { border-bottom:0; padding:7px 8px } td:before { content:attr(data-label); display:block; color:var(--cyan); font-size:.7rem } }
 </style>
@@ -59,19 +80,26 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
   <div id="statusbar" class="statusbar"><span class="chip warn"><span class="loader"></span>checking status</span></div>
 </header>
 <nav class="tabs" aria-label="Sections"><button class="tab active" id="servicesTab" type="button">Services</button><button class="tab" id="proofsTab" type="button">Proofs</button></nav>
-<section id="servicesView"><div class="grid"><div><div id="serviceCards" class="cards"><div class="empty"><span class="loader"></span>Discovering services on Sepolia...</div></div></div>
-<aside class="panel" id="paymentPanel"><h2>Select a service</h2><p>Choose a card to open payment. The Pay button submits a CAW pact, waits for approval, sends the transfer, and records delivery proof.</p>
-<div id="paymentBody" class="hidden"><p id="selectedMeta"></p><label for="intent">Intent</label><textarea id="intent" placeholder="Describe what you want the provider agent to do..."></textarea><div class="actions"><button id="payButton" class="primary" type="button">Pay with CAW</button><span class="hint">Keep this tab open while CAW approval is pending.</span></div></div>
-<div class="log" id="log" aria-live="polite"><div class="log-line"><span class="time">ready</span><span class="msg">Terminal log initialized.</span></div></div></aside></div></section>
+<section id="servicesView">
+  <div class="search-row">
+    <input class="search-input" id="searchInput" type="text" placeholder="What do you need? e.g. &quot;write a Web3 research report&quot; or &quot;check wallet balance on-chain&quot;" autocomplete="off">
+    <button class="search-btn" id="searchBtn" type="button">Find Service</button>
+    <button class="search-btn" id="procureBtn" type="button" style="background:linear-gradient(135deg,var(--yellow),var(--green))">Find & Pay</button>
+  </div>
+  <div class="grid"><div><div id="serviceCards" class="cards"><div class="empty"><span class="loader"></span>Discovering services on Sepolia...</div></div></div>
+<aside class="panel" id="paymentPanel"><h2>Select a service</h2><p>Choose a card or use the search bar above to auto-match a service to your needs. The Pay button submits a CAW pact, waits for approval, sends the transfer, and records delivery proof.</p>
+<div id="paymentBody" class="hidden"><p id="selectedMeta"></p><p id="balanceInfo" class="bal-chip" style="margin:0 0 12px"></p><label for="intent">Intent</label><textarea id="intent" placeholder="Describe what you want the provider agent to do..."></textarea><div class="actions"><button id="payButton" class="primary" type="button">Pay with CAW</button><span class="hint">Keep this tab open while CAW approval is pending.</span></div></div>
+<div class="log" id="log" aria-live="polite"><div class="log-line"><span class="time">ready</span><span class="msg">Terminal log initialized.</span></div></div>
+<div id="resultPanel" class="hidden" style="margin-top:14px;border:1px solid rgba(91,255,199,.2);border-radius:16px;padding:16px;background:rgba(12,18,28,.95)"><div class="result-panel"><div class="result-icon" id="resultIcon">✅</div><div class="result-title" id="resultTitle">Payment Complete</div><div class="result-details" id="resultDetails"></div><div class="actions" style="justify-content:center"><button class="ghost" id="resetResultBtn" type="button">New Procurement</button></div></div></div></aside></div></section>
 <section id="proofsView" class="hidden"><div class="panel"><div class="toolbar"><div><h2>Delivery proofs</h2><p>Records returned by ServiceRegistry on Sepolia.</p></div><button class="ghost" id="refreshProofs" type="button">Refresh proofs</button></div><div id="proofsTable" class="empty"><span class="loader"></span>Loading proofs...</div></div></section>
 </main>
 <script>
 
-const state = { services: [], proofs: [], selected: null, paying: false, waitTimer: null, pactPollTimer: null, lastPactStatus: "" };
+const state = { services: [], proofs: [], selected: null, paying: false, waitTimer: null, pactPollTimer: null, lastPactStatus: "", balance: null };
 const el = (id) => document.getElementById(id);
 
 function escapeHtml(value) {
-  return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;");
+  return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 function short(value, head = 10, tail = 6) {
   const text = String(value || "");
@@ -95,6 +123,65 @@ function log(message, kind = "") {
   el("log").scrollTop = el("log").scrollHeight;
 }
 function resetLog() { el("log").innerHTML = ""; }
+
+function showResult(result, serviceName) {
+  const icon = el("resultIcon");
+  const title = el("resultTitle");
+  const details = el("resultDetails");
+
+  if (result.status === "completed") {
+    icon.textContent = "✅";
+    title.textContent = "Payment Complete";
+    title.style.color = "var(--green)";
+  } else if (result.status === "pending_approval") {
+    icon.textContent = "⏳";
+    title.textContent = "Pact Submitted — Approve in CAW App";
+    title.style.color = "var(--yellow)";
+  } else if (result.status === "failed" || result.status === "cancelled") {
+    icon.textContent = "❌";
+    title.textContent = result.error || "Payment Failed";
+    title.style.color = "var(--red)";
+  } else {
+    icon.textContent = "ℹ️";
+    title.textContent = `Status: ${result.status}`;
+    title.style.color = "var(--muted)";
+  }
+
+  const rows = [];
+  if (serviceName) rows.push(`<div class="result-row"><span class="label">Service</span><span class="value">${escapeHtml(serviceName)}</span></div>`);
+
+  const txHash = result.tx_hash || (result.transfer && (result.transfer.transaction_hash || result.transfer.id)) || "";
+  if (txHash) {
+    const txShort = typeof txHash === "string" && txHash.length > 42 ? txHash.slice(0, 42) : txHash;
+    rows.push(`<div class="result-row"><span class="label">Tx Hash</span><span class="value mono"><a class="explorer-link" href="https://sepolia.etherscan.io/tx/${encodeURIComponent(txHash)}" target="_blank" rel="noopener">${escapeHtml(txShort)}</a></span></div>`);
+  }
+
+  const pactId = result.pact && (result.pact.pact_id || result.pact.id || "");
+  if (pactId) rows.push(`<div class="result-row"><span class="label">Pact ID</span><span class="value mono">${escapeHtml(pactId.slice(0, 36))}</span></div>`);
+
+  if (result.proof && result.proof.tx_hash) {
+    const pTx = result.proof.tx_hash;
+    const pShort = typeof pTx === "string" && pTx.length > 42 ? pTx.slice(0, 42) : pTx;
+    rows.push(`<div class="result-row"><span class="label">Proof Tx</span><span class="value mono good">${escapeHtml(pShort)}</span></div>`);
+  }
+
+  if (result.matched_service && result.matched_service.match_score !== undefined) {
+    rows.push(`<div class="result-row"><span class="label">Match Score</span><span class="value good">${result.matched_service.match_score}</span></div>`);
+  }
+
+  details.innerHTML = rows.join("");
+
+  // Hide payment body, show result panel
+  el("paymentBody").classList.add("hidden");
+  el("resultPanel").classList.remove("hidden");
+}
+
+function resetResult() {
+  el("resultPanel").classList.add("hidden");
+  el("paymentBody").classList.remove("hidden");
+  resetLog();
+  log("Terminal reset for new procurement.", "good");
+}
 async function api(path, options = {}) {
   const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
   const text = await res.text();
@@ -146,6 +233,8 @@ function selectService(id) {
   if (!state.selected) return;
   const svc = state.selected;
   el("paymentPanel").querySelector("h2").textContent = svc.name;
+  const bal = state.balance && state.balance.amount && state.balance.amount !== "unknown" ? `Balance: ${parseFloat(state.balance.amount).toFixed(6)} SETH` : "";
+  el("balanceInfo").textContent = bal;
   el("selectedMeta").innerHTML = `${escapeHtml(svc.description)}<br><strong style="color:var(--green)">${escapeHtml(formatEth(svc.priceWei))} ${escapeHtml(svc.tokenId || "SETH")}</strong><br><span class="mono">pay to ${escapeHtml(svc.paymentAddress || "")}</span>`;
   el("intent").value = `Purchase ${svc.name} for: `;
   el("paymentBody").classList.remove("hidden");
@@ -164,6 +253,108 @@ async function loadServices() {
     log(`Service discovery failed: ${err.message}`, "bad");
   }
 }
+async function doSearch() {
+  const query = el("searchInput").value.trim();
+  if (!query) return;
+  el("searchBtn").disabled = true;
+  el("searchBtn").textContent = "Matching...";
+  resetLog();
+  log(`Searching for: ${query}`, "warn");
+  try {
+    const data = await api("/api/procure/match", { method: "POST", body: JSON.stringify({ request: query }) });
+    state.balance = data.balance;
+
+    // Re-sort cards by match score with badges
+    el("serviceCards").innerHTML = data.matches.map((m) => {
+      const svc = state.services.find((s) => Number(s.id) === Number(m.id));
+      if (!svc) return "";
+      const price = `${m.price_eth} ${svc.tokenId || "SETH"}`;
+      const badgeClass = m.match_score > 1 ? "match-badge high" : "match-badge";
+      return `<article class="card selected" tabindex="0" role="button" data-service-id="${escapeHtml(m.id)}">
+        <div class="card-top"><span>service #${escapeHtml(m.id)} <span class="${badgeClass}">match ${m.match_score}</span></span><span>${escapeHtml(svc.chainId || "SETH")}</span></div>
+        <h3 class="service-name">${escapeHtml(m.name)}</h3>
+        <div class="desc">${escapeHtml(m.description)}</div>
+        <div class="price">${escapeHtml(price)} <span class="hint">(${m.price_usd})</span></div>
+        <div class="addr">pay to ${escapeHtml(short(m.paymentAddress))}</div>
+      </article>`;
+    }).join("");
+    // Re-bind click events
+    el("serviceCards").querySelectorAll(".card").forEach((card) => {
+      const choose = () => selectService(Number(card.dataset.serviceId));
+      card.addEventListener("click", choose);
+      card.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose(); } });
+    });
+    // Auto-select best match
+    const bestMatch = data.matches[0];
+    if (bestMatch) {
+      selectService(bestMatch.id);
+      log(`Best match: ${bestMatch.name} (score: ${bestMatch.match_score})`, "good");
+      if (data.balance && data.balance.amount && data.balance.amount !== "unknown") {
+        log(`Wallet balance: ${parseFloat(data.balance.amount).toFixed(6)} SETH`, "good");
+      }
+    } else {
+      log("No matching services found.", "bad");
+    }
+  } catch (err) {
+    log(`Search failed: ${err.message}`, "bad");
+  } finally {
+    el("searchBtn").disabled = false;
+    el("searchBtn").textContent = "Find Service";
+  }
+}
+
+async function doProcure() {
+  const query = el("searchInput").value.trim();
+  if (!query) return;
+  el("procureBtn").disabled = true;
+  el("searchBtn").disabled = true;
+  el("procureBtn").textContent = "Processing...";
+  resetLog();
+  log(`🚀 One-click procurement: ${query}`, "good");
+  log("Matching best service...", "warn");
+  try {
+    const result = await api("/api/procure", { method: "POST", body: JSON.stringify({ request: query }) });
+    
+    const ms = result.matched_service;
+    if (ms) {
+      log(`Matched: ${ms.name} (score: ${ms.match_score})`, "good");
+      // Select the matched service card
+      selectService(ms.id);
+    }
+    
+    if (result.pact) {
+      const pid = result.pact.pact_id || result.pact.id || "";
+      log(`Pact: ${pid ? pid.slice(0,12)+"..." : "submitted"}`, "good");
+    }
+    if (result.transfer) {
+      const txh = result.tx_hash || result.transfer.transaction_hash || result.transfer.id || "";
+      log(`Transfer: ${txh.slice(0,30)}...`, "good");
+    }
+    if (result.proof) {
+      log(`Delivery proof recorded on-chain!`, "good");
+    }
+    
+    if (result.status === "completed") {
+      log(`✅ Procurement complete!`, "good");
+    } else if (result.status === "pending_approval") {
+      log(`⏳ Pact pending — approve in CAW App`, "warn");
+    } else if (result.status === "failed") {
+      log(`❌ Failed: ${result.error || "unknown"}`, "bad");
+    }
+
+    showResult(result, ms ? ms.name : "");
+    
+    await loadStatus();
+    await loadProofs();
+  } catch (err) {
+    log(`❌ Procurement failed: ${err.message}`, "bad");
+  } finally {
+    el("procureBtn").disabled = false;
+    el("searchBtn").disabled = false;
+    el("procureBtn").textContent = "Find & Pay";
+  }
+}
+
 function proofRows(proofs) {
   return proofs.map((proof) => {
     const date = proof.timestamp ? new Date(Number(proof.timestamp) * 1000).toLocaleString() : "unknown";
@@ -234,6 +425,7 @@ async function paySelected() {
     if (result.transfer) log(`Transfer sent: ${result.tx_hash || result.transfer.transaction_hash || result.transfer.id || "submitted"}`, "good");
     if (result.proof) log(`Delivery recorded: proof tx ${result.proof.tx_hash || "recorded"}`, "good");
     log(`Payment flow status: ${result.status}`, result.status === "completed" ? "good" : "warn");
+    showResult(result, state.selected ? state.selected.name : "");
     await loadStatus();
     await loadProofs();
   } catch (err) {
@@ -256,6 +448,10 @@ el("servicesTab").addEventListener("click", () => switchTab("services"));
 el("proofsTab").addEventListener("click", () => switchTab("proofs"));
 el("refreshProofs").addEventListener("click", loadProofs);
 el("payButton").addEventListener("click", paySelected);
+el("searchBtn").addEventListener("click", doSearch);
+el("procureBtn").addEventListener("click", doProcure);
+el("searchInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(); } });
+el("resetResultBtn").addEventListener("click", resetResult);
 loadStatus();
 loadServices();
 loadProofs();

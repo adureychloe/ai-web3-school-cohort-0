@@ -4,12 +4,12 @@ The web layer calls the existing sandbox engine functions and exposes them as
 JSON APIs for the single-page interface in web/index.html.
 """
 
-from __future__ import annotations
-
 import asyncio
+import io
 import json
 import os
 import subprocess
+import sys
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -20,6 +20,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from agent_commerce_sandbox.engine import discover_services, pay_for_service, show_proofs
+from agent_commerce_sandbox.procurement_agent import match_and_rank, get_balance, format_price
+from agent_commerce_sandbox.chain_client import ChainClient
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -41,10 +43,17 @@ class PayRequest(BaseModel):
     intent: str = Field(default="", max_length=4000)
 
 
+class MatchRequest(BaseModel):
+    request: str = Field(..., min_length=1, max_length=1000)
+
+
 def json_safe(value: Any) -> Any:
-    """Convert web3 and CLI return values into JSON-serializable objects."""
+    """Convert web3 and CLI return values into JSON-serializable objects.
+    Also strips sensitive fields (api_key) to prevent credential leaks.
+    """
     if isinstance(value, dict):
-        return {str(k): json_safe(v) for k, v in value.items()}
+        return {str(k): json_safe(v) for k, v in value.items()
+                if k.lower() not in _SENSITIVE_PACT_FIELDS}
     if isinstance(value, (list, tuple, set)):
         return [json_safe(v) for v in value]
     if isinstance(value, bytes):
@@ -57,6 +66,17 @@ def json_safe(value: Any) -> Any:
         except Exception:
             pass
     return value
+
+
+# Fields to strip from pact data before sending to browser (credential leak prevention)
+_SENSITIVE_PACT_FIELDS = {"api_key"}
+
+
+def _sanitize_pact(pact: dict) -> dict:
+    """Strip sensitive fields from pact data before returning to browser."""
+    if not isinstance(pact, dict):
+        return pact
+    return {k: v for k, v in pact.items() if k.lower() not in _SENSITIVE_PACT_FIELDS}
 
 
 def run_caw_json(*args: str, timeout: int = 60) -> dict[str, Any]:
@@ -80,8 +100,15 @@ def run_caw_json(*args: str, timeout: int = 60) -> dict[str, Any]:
 
 
 async def to_thread(func, *args, **kwargs):
-    """Run blocking sandbox code in a worker thread."""
-    return await asyncio.to_thread(func, *args, **kwargs)
+    """Run blocking sandbox code in a worker thread with silenced stdout."""
+    def _wrapped():
+        old_out = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            return func(*args, **kwargs)
+        finally:
+            sys.stdout = old_out
+    return await asyncio.to_thread(_wrapped)
 
 
 @app.get("/")
@@ -116,7 +143,7 @@ async def api_pact_status(pact_id: str) -> dict[str, Any]:
         data = await to_thread(run_caw_json, "pact", "show", "--pact-id", pact_id, timeout=60)
         pact = data.get("result", data) if isinstance(data, dict) else {"raw": data}
         status = pact.get("status", "unknown") if isinstance(pact, dict) else "unknown"
-        return {"pact_id": pact_id, "status": status, "pact": json_safe(pact)}
+        return {"pact_id": pact_id, "status": status, "pact": json_safe(_sanitize_pact(pact))}
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(status_code=504, detail="Timed out while checking pact status") from exc
     except Exception as exc:
@@ -132,6 +159,75 @@ async def api_proofs() -> list[dict[str, Any]]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+class MatchResponseItem(BaseModel):
+    id: int
+    name: str
+    description: str
+    price_eth: str
+    price_usd: str
+    match_score: int
+    paymentAddress: str
+    chainId: str
+    tokenId: str
+
+
+@app.post("/api/procure/match")
+async def api_procure_match(payload: MatchRequest) -> dict[str, Any]:
+    try:
+        chain = await to_thread(ChainClient)
+        services = await to_thread(chain.list_services)
+        active = [s for s in services if s.get("active", True)]
+        ranked = match_and_rank(payload.request, active)
+
+        matches = []
+        for score, s in ranked[:5]:
+            eth_s, usd_s = format_price(s["priceWei"])
+            matches.append(MatchResponseItem(
+                id=s["id"],
+                name=s["name"],
+                description=s["description"],
+                price_eth=eth_s,
+                price_usd=usd_s,
+                match_score=score,
+                paymentAddress=s["paymentAddress"],
+                chainId=s["chainId"],
+                tokenId=s["tokenId"],
+            ))
+
+        balance = await to_thread(get_balance)
+        return {"matches": [m.model_dump() for m in matches], "balance": balance}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/procure")
+async def api_procure(payload: MatchRequest) -> dict[str, Any]:
+    """Full procurement: match best service, create pact, execute transfer, record proof."""
+    try:
+        chain = await to_thread(ChainClient)
+        services = await to_thread(chain.list_services)
+        active = [s for s in services if s.get("active", True)]
+        if not active:
+            raise HTTPException(status_code=404, detail="No active services available")
+
+        ranked = match_and_rank(payload.request, active)
+        best = ranked[0][1]
+
+        result = await to_thread(pay_for_service, best["id"], payload.request)
+        return json_safe({
+            **result,
+            "matched_service": {
+                "id": best["id"],
+                "name": best["name"],
+                "match_score": ranked[0][0],
+            }
+        })
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/api/status")
 async def api_status() -> dict[str, Any]:
     status: dict[str, Any] = {
@@ -142,9 +238,9 @@ async def api_status() -> dict[str, Any]:
     }
 
     try:
-        from agent_commerce_sandbox.chain_client import ChainClient
-
         chain = await to_thread(ChainClient)
+        if chain is None:
+            raise RuntimeError("ChainClient() returned None")
         status["contract_address"] = chain.contract_addr
         status["service_count"] = await to_thread(chain.get_service_count)
         status["proof_count"] = await to_thread(chain.get_proof_count)
