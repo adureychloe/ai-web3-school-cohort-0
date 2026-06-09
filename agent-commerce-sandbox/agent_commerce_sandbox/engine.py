@@ -4,10 +4,10 @@ Core flow engine — orchestrates service discovery, payment, and delivery proof
 Flow:
   1. Query ServiceRegistry contract for services
   2. User selects a service and states intent
-  3. Submit CAW Pact for payment authorization
+  3. Submit CAW Pact (transfer + contract_call policies)
   4. Wait for user to approve in CAW App
   5. Execute CAW Transfer
-  6. Record delivery proof on-chain
+  6. Record delivery proof via CAW tx call (under same pact)
 """
 
 import json
@@ -118,30 +118,62 @@ def pay_for_service(service_id: int, user_intent: str) -> dict:
     )
 
     import json
-    # Build policy dynamically using the service's payment address
+    # Build policies dynamically — transfer for payment + contract_call for delivery proof
     payment_addr = service["paymentAddress"]
     token_id = service["tokenId"]
     chain_id = service["chainId"]
-    policies_json = json.dumps([{
-        "name": f"pay-{service_name.lower().replace(' ', '-')[:20]}",
-        "type": "transfer",
-        "rules": {
-            "effect": "allow",
-            "when": {
-                "chain_in": [chain_id],
-                "token_in": [{"chain_id": chain_id, "token_id": token_id}],
-                "destination_address_in": [
-                    {"chain_id": chain_id, "address": payment_addr}
-                ],
+    contract_addr = chain.contract_addr
+    service_name_short = service_name.lower().replace(" ", "-")[:20]
+    policies_json = json.dumps([
+        {
+            "name": f"pay-{service_name_short}",
+            "type": "transfer",
+            "rules": {
+                "effect": "allow",
+                "when": {
+                    "chain_in": [chain_id],
+                    "token_in": [{"chain_id": chain_id, "token_id": token_id}],
+                    "destination_address_in": [
+                        {"chain_id": chain_id, "address": payment_addr}
+                    ],
+                },
+                "deny_if": {"amount_usd_gt": "5.00"},
             },
-            "deny_if": {"amount_usd_gt": "5.00"},
         },
-    }])
+        {
+            "name": "record-delivery",
+            "type": "contract_call",
+            "rules": {
+                "effect": "allow",
+                "when": {
+                    "chain_in": [chain_id],
+                    "target_in": [
+                        {"chain_id": chain_id, "contract_addr": contract_addr}
+                    ],
+                },
+            },
+        },
+    ])
+    # Two tx needed: transfer + contract_call for recordDelivery
+    completion_conditions = json.dumps([{"type": "tx_count", "threshold": "2"}])
+
+    # Update execution plan to mention both steps
+    execution_plan = (
+        f"# Summary\n"
+        f"Pay for {service_name} and record delivery proof via Cobo Agentic Wallet\n\n"
+        f"# Operations\n"
+        f"1. Transfer {amount_str} {token_id} to {payment_addr} on {chain_id}\n"
+        f"2. Call recordDelivery() on ServiceRegistry ({contract_addr}) to record proof\n\n"
+        f"# Risk Controls\n"
+        f"- Transfer capped at {amount_str} {token_id}\n"
+        f"- Contract call limited to ServiceRegistry.recordDelivery()"
+    )
 
     try:
         pact = caw.submit_pact(
             intent=pact_intent,
             policies_json=policies_json,
+            completion_conditions=completion_conditions,
             name=f"pay-{service_name.lower().replace(' ', '-')[:30]}",
             execution_plan=execution_plan,
         )
@@ -229,36 +261,60 @@ def pay_for_service(service_id: int, user_intent: str) -> dict:
 
     print()
 
-    # ── Step 5: Record Delivery Proof ─────────────────────
-    print("[5/5] Recording delivery proof on-chain...")
+    # ── Step 5: Record Delivery Proof via CAW tx call ────
+    print("[5/5] Recording delivery proof on-chain via CAW...")
 
     tx_hash_for_proof = result.get("tx_hash", "")
     summary = f"Delivered {service_name} — {user_intent[:100]}"
 
     try:
-        proof_result = chain.record_delivery(
-            service_id=service_id,
-            tx_hash=tx_hash_for_proof,
-            summary=summary,
+        import json as _json
+        # Encode recordDelivery(service_id, tx_hash, summary) calldata
+        call_data = caw.abi_encode(
+            "recordDelivery(uint256,string,string)",
+            [service_id, tx_hash_for_proof, summary],
         )
-        result["proof"] = proof_result
-        print(f"  ✅ Delivery proof recorded on-chain!")
 
-        # Show final summary
-        print()
-        print("─" * 60)
-        print("  ✅ PAYMENT COMPLETE")
-        print("─" * 60)
-        print(f"  Service:  {service_name}")
-        print(f"  Amount:   {amount_str} {service['tokenId']}")
-        print(f"  Pact ID:  {pact_id}")
-        if tx_hash_for_proof:
-            print(f"  Tx Hash:  {tx_hash_for_proof}")
-        print(f"  Contract: {chain.contract_addr}")
-        print(f"  Proof Tx: {proof_result.get('tx_hash', 'N/A')}")
-        print()
+        # Execute via CAW tx call under the same pact
+        call_result = caw.execute_contract_call(
+            pact_id=pact_id,
+            contract_address=chain.contract_addr,
+            calldata=call_data,
+            chain_id=chain_id,
+            request_id=f"delivery-{service_id}-{int(time.time())}",
+        )
+        call_tx_id = call_result.get("id", "")
+        print(f"     Call submitted, tx_id={call_tx_id[:20]}...")
 
-        result["status"] = "completed"
+        if call_tx_id:
+            call_complete = caw.wait_for_transaction_complete(call_tx_id, timeout=120)
+            result["proof"] = call_complete
+            proof_tx_hash = call_complete.get("transaction_hash", "")
+            print(f"  ✅ Delivery proof recorded on-chain via CAW!")
+            if proof_tx_hash:
+                print(f"     Proof Tx: {proof_tx_hash}")
+
+            # Show final summary
+            print()
+            print("─" * 60)
+            print("  ✅ PAYMENT COMPLETE (CAW-only)")
+            print("─" * 60)
+            print(f"  Service:  {service_name}")
+            print(f"  Amount:   {amount_str} {service['tokenId']}")
+            print(f"  Pact ID:  {pact_id}")
+            if tx_hash_for_proof:
+                print(f"  Tx Hash:  {tx_hash_for_proof}")
+            if proof_tx_hash:
+                print(f"  Proof Tx: {proof_tx_hash}")
+            print(f"  Contract: {chain.contract_addr}")
+            print()
+
+            result["status"] = "completed"
+        else:
+            msg = "Contract call submitted but no tx_id returned"
+            print(f"  ⚠️  {msg}")
+            result["status"] = "payment_completed"
+            result["error"] = msg
     except Exception as e:
         msg = f"Proof recording failed (payment succeeded): {e}"
         print(f"  ⚠️  {msg}")

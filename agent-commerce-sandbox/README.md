@@ -109,16 +109,14 @@ python -m uvicorn web.app:app --host 0.0.0.0 --port 8080
 ### CAW 支付流程
 
 ```
-1. caw pact submit --intent "..." --policies '[...]' --completion-conditions '[...]'
+1. caw pact submit --intent "..." --policies '[transfer, contract_call]' --completion-conditions 'tx_count: 2'
 2. User approves in CAW App (手机批准)
-3. caw tx transfer --pact-id <uuid> --src-address <addr> --dst-address <addr> --amount <n> --token-id SETH --chain-id SETH
-4. caw tx get --tx-id <uuid> → 确认链上交易
+3. caw tx transfer --pact-id <uuid> --src-address <addr> --dst-address <addr> --amount <n> --token-id SETH
+4. caw tx call --pact-id <uuid> --contract <ServiceRegistry> --calldata <encoded recordDelivery()>
+5. caw tx get --tx-id <uuid> → 确认两笔链上交易
 ```
 
-策略 (Policies) 动态生成，限制：
-- 只能向指定服务商地址付款
-- 只能在 SETH 链上使用 SETH
-- 单笔上限 $5.00 USD
+**全部资金操作通过 CAW 完成** — 不需要 EOA 私钥。Pact 同时包含 `transfer` 和 `contract_call` 两种策略，支付和存证都在同一个授权范围内。
 
 ### 关键 CAW 凭证
 

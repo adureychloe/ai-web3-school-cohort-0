@@ -32,7 +32,7 @@ DEFAULT_POLICY = json.dumps([
                     {"chain_id": "SETH", "address": WALLET_SETH_ADDR}
                 ],
             },
-            "deny_if": {"amount_usd_gt": "0.01"},
+            "deny_if": {"amount_usd_gt": "5.00"},
         },
     }
 ])
@@ -152,6 +152,69 @@ class CawClient:
         )
 
     # ── Transfers ──────────────────────────────────────────
+
+    def abi_encode(self, method: str, args: list) -> str:
+        """Encode a function call into hex calldata using caw util abi encode.
+
+        Args:
+            method: Function signature, e.g. "recordDelivery(uint256,string,string)"
+            args: Function arguments as a JSON array
+
+        Returns:
+            Hex-encoded calldata string (0x-prefixed)
+        """
+        import json as _json
+        result = subprocess.run(
+            ["caw", "util", "abi", "encode", "--method", method,
+             "--args", _json.dumps(args)],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"abi encode failed (exit={result.returncode}): "
+                f"{result.stderr[:200]}"
+            )
+        data = _json.loads(result.stdout)
+        raw = data.get("result", data)
+        if isinstance(raw, dict):
+            return raw.get("calldata", "")
+        return raw
+
+    def execute_contract_call(
+        self,
+        pact_id: str,
+        contract_address: str,
+        calldata: str,
+        chain_id: str = "SETH",
+        src_address: str = WALLET_SETH_ADDR,
+        request_id: Optional[str] = None,
+    ) -> dict:
+        """Execute a smart contract call via CAW under an active pact.
+
+        Args:
+            pact_id: Active pact UUID
+            contract_address: EVM contract address to call
+            calldata: Hex-encoded calldata (from abi_encode)
+            chain_id: Chain ID (e.g. "SETH")
+            src_address: Source address (REQUIRED by CAW API for tx call)
+            request_id: Optional unique request ID for idempotency
+
+        Returns:
+            Dict with call result (id, status, etc.)
+        """
+        args = [
+            "tx", "call",
+            "--pact-id", pact_id,
+            "--src-address", src_address,
+            "--contract", contract_address,
+            "--calldata", calldata,
+            "--chain-id", chain_id,
+        ]
+        if request_id:
+            args += ["--request-id", request_id]
+
+        data = _run_caw(*args, timeout=120)
+        return data
 
     def execute_transfer(
         self,
