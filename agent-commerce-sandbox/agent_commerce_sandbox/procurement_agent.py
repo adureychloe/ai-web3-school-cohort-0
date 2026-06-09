@@ -1,12 +1,13 @@
 """Procurement Agent — natural language service procurement.
 
-Matches user requests to on-chain services, shows ranked matches with balance,
-lets user pick, then runs the full payment flow with progress reporting.
+Matches user requests to on-chain services using AI-powered semantic
+analysis. Supports any language (Chinese, English, mixed).
 """
 
 import json
-import re
+import os
 import subprocess
+import urllib.request
 from web3 import Web3
 
 from .chain_client import ChainClient
@@ -15,65 +16,154 @@ from .engine import pay_for_service
 # SETH price estimate for USD display
 SETH_PRICE_USD = 3000
 
-# Chinese keyword tags to bridge language gap between user query and English
-# service descriptions.  Each service ID maps to Chinese keyword tags.
-_CN_TAGS = {
-    1: {"研究", "笔记", "报告", "项目", "web3", "行业", "趋势", "文章", "写", "文档", "总结"},
-    2: {"数据", "链上", "查询", "地址", "余额", "价格", "交易", "历史", "状态", "监控", "获取"},
-    3: {"深度", "分析", "市场", "预测", "风控", "评估", "决策", "洞察", "策略", "投资", "行情"},
-}
+# AI matching configuration
+_AI_MODEL = "deepseek-v4-flash"
+_AI_ENDPOINT = os.environ.get(
+    "AI_MATCH_ENDPOINT",
+    (os.environ.get("ANTHROPIC_BASE_URL", "https://vpsairobot.com").rstrip("/")) + "/v1/chat/completions",
+)
+_AI_KEY = os.environ.get(
+    "AI_MATCH_API_KEY",
+    os.environ.get("VPSAIROBOT_API_KEY", os.environ.get("ANTHROPIC_API_KEY", "")),
+)
 
 
 # ── Helpers ─────────────────────────────────────────────────
 
 
-def _tokenize(text: str) -> set:
-    """Split text into keyword tokens (Chinese chars + English words)."""
-    chinese = re.findall(r"[\u4e00-\u9fff]+", text)
-    english = re.findall(r"[a-zA-Z]{3,}", text)
 
-    stop_words = {
-        "the", "and", "for", "with", "from", "that", "this", "you", "not",
-        "are", "was", "had", "has", "but", "its", "all", "can", "will",
-        "xxx", "help", "need", "would", "could", "also", "get", "make",
-        "want", "like", "just", "please",
-    }
+def _ai_match(request: str, services: list) -> list:
+    """Use AI to semantically match a request to available services.
 
-    tokens = set()
-    for c in chinese:
-        for char in c:
-            tokens.add(char)
-    for w in english:
-        wl = w.lower()
-        if wl not in stop_words:
-            tokens.add(wl)
-    return tokens
-
-
-def match_and_rank(request: str, services: list) -> list:
-    """Score and rank services by keyword overlap. Returns [(score, svc), ...]."""
-    req_tokens = _tokenize(request)
-    if not req_tokens:
+    Calls the configured LLM to analyze intent. Falls back to equal scores on error.
+    Returns [(score, service), ...] sorted by relevance.
+    """
+    if not _AI_KEY or not services:
         return [(0, s) for s in services]
+
+    service_list = [
+        {"id": s["id"], "name": s["name"], "description": s["description"]}
+        for s in services
+    ]
+
+    import json as _json
+    prompt = (
+        "You are a service matching AI. Given a user request and available services, "
+        "score each service by semantic relevance.\n\n"
+        f'User request: "{request}"\n\n'
+        f"Available services:\n{_json.dumps(service_list, indent=2, ensure_ascii=False)}\n\n"
+        "Return ONLY a JSON array of objects with:\n"
+        "- service_id: int\n"
+        "- score: int (0-10, 10=perfect match)\n"
+        "- reason: str (one sentence)\n\n"
+        'Example: [{"service_id": 1, "score": 8, "reason": "..."}]\n\n'
+        "Rules:\n"
+        "- Understand intent beyond keywords.\n"
+        "- Support any language: Chinese, English, mixed.\n"
+        "- Score 8-10: obvious match. 4-7: partial. 0-3: minimal/no match.\n"
+        "- Return ALL services. ONLY output JSON, nothing else."
+    )
+
+    payload = _json.dumps({
+        "model": _AI_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 500,
+    }).encode()
+
+    try:
+        req = urllib.request.Request(
+            _AI_ENDPOINT,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {_AI_KEY}",
+                "x-api-key": _AI_KEY,
+            },
+            method="POST",
+        )
+        resp = urllib.request.urlopen(req, timeout=30)
+        body = _json.loads(resp.read())
+        content = body["choices"][0]["message"]["content"]
+
+        ai_results = _json.loads(content)
+        ai_by_id = {r["service_id"]: r for r in ai_results if isinstance(r, dict) and "score" in r}
+        scored = [(ai_by_id.get(s["id"], {"score": 0})["score"], s) for s in services]
+        scored.sort(key=lambda x: (-x[0], x[1]["id"]))
+        return scored
+    except Exception:
+        # Fallback: local semantic scoring via phrase matching
+        return _local_score(request, services)
+
+
+def _local_score(request: str, services: list) -> list:
+    """Local fallback scoring when AI endpoint is unavailable.
+
+    Uses phrase-level matching and semantic word groups instead of
+    single-character tokenization. Supports Chinese and English.
+    """
+    import difflib
+    import re
+
+    req_lower = request.lower()
+
+    # Define semantic intent groups (AI-powered replacement of _CN_TAGS)
+    intent_groups = {
+        "write": ["写", "研究", "研究", "笔记", "notes", "research", "report", "文档", "doc", "summary",
+                   "总结", "生成", "generate", "create", "article", "文章", "project", "项目"],
+        "data": ["数据", "data", "查询", "query", "地址", "address", "余额", "balance",
+                 "价格", "price", "交易", "transaction", "history", "历史", "链上", "onchain",
+                 "状态", "status", "监控", "monitor", "fetch", "获取", "rpc"],
+        "analyze": ["分析", "analysis", "市场", "market", "预测", "predict", "深度", "deep",
+                    "行情", "趋势", "trend", "insight", "洞察", "评估", "evaluate",
+                    "strategy", "策略", "indicator", "指标", "fund", "资金", "flow"],
+    }
 
     scored = []
     for s in services:
-        candidate_text = f"{s['name']} {s['description']}"
-        cand_tokens = _tokenize(candidate_text)
+        text = f"{s['name']} {s['description']}".lower()
 
-        # Score by English keyword overlap
-        overlap = len(req_tokens & cand_tokens) if cand_tokens else 0
+        # Score 1: Direct word/phrase overlap
+        words_req = set(re.findall(r'[a-zA-Z]{3,}', req_lower))
+        words_svc = set(re.findall(r'[a-zA-Z]{3,}', text))
+        eng_overlap = len(words_req & words_svc) if words_svc else 0
 
-        # Score by Chinese multi-char tag substrings in request
-        tags = _CN_TAGS.get(s["id"], set())
-        for tag in tags:
-            if tag in request:
-                overlap += 1
+        # Score 2: Intent group overlap
+        intent_score = 0
+        req_intents = set()
+        for group_name, keywords in intent_groups.items():
+            for kw in keywords:
+                if kw.lower() in request.lower():
+                    req_intents.add(group_name)
+                    break
 
-        scored.append((overlap, s))
+        for intent in req_intents:
+            for kw in intent_groups[intent]:
+                if kw.lower() in text:
+                    intent_score += 1
+
+        # Score 3: Chinese multi-character phrase overlap (not single chars)
+        ch_phrases_req = set(re.findall(r'[\u4e00-\u9fff]{2,}', request))
+        ch_phrases_svc = set(re.findall(r'[\u4e00-\u9fff]{2,}', text))
+        ch_overlap = len(ch_phrases_req & ch_phrases_svc)
+
+        # Score 4: SequenceMatcher similarity on full text
+        sim = difflib.SequenceMatcher(None, req_lower[:200], text[:200]).ratio()
+
+        total = eng_overlap * 2 + intent_score * 3 + ch_overlap * 2 + int(sim * 10)
+        scored.append((total, s))
 
     scored.sort(key=lambda x: (-x[0], x[1]["id"]))
     return scored
+
+
+def match_and_rank(request: str, services: list) -> list:
+    """Use AI-powered semantic matching instead of keyword overlap.
+
+    Falls back to equal scores if AI endpoint is unavailable.
+    Returns [(score, svc), ...] sorted by relevance (highest first).
+    """
+    return _ai_match(request, services)
 
 
 def get_balance() -> dict:
