@@ -79,7 +79,11 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
   <div class="brand"><div class="logo">ACH</div><div><h1>Agent Commerce Hub</h1><div class="subtitle">On-chain service discovery × CAW payments × delivery proofs</div></div></div>
   <div id="statusbar" class="statusbar"><span class="chip warn"><span class="loader"></span>checking status</span></div>
 </header>
-<nav class="tabs" aria-label="Sections"><button class="tab active" id="servicesTab" type="button">Services</button><button class="tab" id="proofsTab" type="button">Proofs</button></nav>
+<nav class="tabs" aria-label="Sections">
+  <button class="tab active" id="servicesTab" type="button">Services</button>
+  <button class="tab" id="proofsTab" type="button">Proofs</button>
+  <button class="tab" id="x402Tab" type="button">x402 Market</button>
+</nav>
 <section id="servicesView">
   <div class="search-row">
     <input class="search-input" id="searchInput" type="text" placeholder="What do you need? e.g. &quot;write a Web3 research report&quot; or &quot;check wallet balance on-chain&quot;" autocomplete="off">
@@ -92,6 +96,40 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
 <div class="log" id="log" aria-live="polite"><div class="log-line"><span class="time">ready</span><span class="msg">Terminal log initialized.</span></div></div>
 <div id="resultPanel" class="hidden" style="margin-top:14px;border:1px solid rgba(91,255,199,.2);border-radius:16px;padding:16px;background:rgba(12,18,28,.95)"><div class="result-panel"><div class="result-icon" id="resultIcon">✅</div><div class="result-title" id="resultTitle">Payment Complete</div><div class="result-details" id="resultDetails"></div><div class="actions" style="justify-content:center"><button class="ghost" id="resetResultBtn" type="button">New Procurement</button></div></div></div></aside></div></section>
 <section id="proofsView" class="hidden"><div class="panel"><div class="toolbar"><div><h2>Delivery proofs</h2><p>Records returned by ServiceRegistry on Sepolia.</p></div><button class="ghost" id="refreshProofs" type="button">Refresh proofs</button></div><div id="proofsTable" class="empty"><span class="loader"></span>Loading proofs...</div></div></section>
+<section id="x402View" class="hidden">
+  <div class="panel" style="margin-bottom:18px">
+    <div class="toolbar">
+      <div><h2>x402 Market — Agent Commerce</h2><p>Hermes sells services. Buy via HTTP 402 + CAW auto-pay.</p></div>
+      <div><span id="x402RevenueChip" class="chip">revenue: --</span></div>
+    </div>
+  </div>
+  <div class="grid">
+    <div>
+      <div class="panel" style="margin-bottom:18px">
+        <div class="toolbar"><div><h3>🛒 Services for Sale</h3></div></div>
+        <div id="x402ServiceCards" class="cards"><div class="empty"><span class="loader"></span>Loading x402 services...</div></div>
+      </div>
+      <div class="panel">
+        <div class="toolbar"><div><h3>📊 Revenue</h3></div><button class="ghost" id="refreshRevenue" type="button">Refresh</button></div>
+        <div id="x402RevenuePanel"><p class="empty">No revenue data yet.</p></div>
+      </div>
+    </div>
+    <aside class="panel">
+      <h3>🤖 Buy via x402</h3>
+      <p>Enter a request. Agent auto-pays via CAW Pact → Transfer → gets result.</p>
+      <label for="x402ServiceSelect">Service</label>
+      <select id="x402ServiceSelect" style="width:100%;border-radius:14px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.28);color:var(--text);padding:12px 14px;font:inherit;outline:none;margin-bottom:8px"></select>
+      <label for="x402Query">Your request</label>
+      <textarea id="x402Query" placeholder="e.g. ETH市场深度分析" style="min-height:80px"></textarea>
+      <div class="actions">
+        <button class="primary" id="x402BuyBtn" type="button">Buy with CAW</button>
+        <span class="hint">Approve pact in CAW App.</span>
+      </div>
+      <div class="log" id="x402Log" aria-live="polite"><div class="log-line"><span class="time">ready</span><span class="msg">x402 terminal ready.</span></div></div>
+      <div id="x402ResultPanel" class="hidden" style="margin-top:14px;border:1px solid rgba(91,255,199,.2);border-radius:16px;padding:16px;background:rgba(12,18,28,.95)"><div class="result-panel"><div class="result-icon" id="x402ResultIcon">✅</div><div class="result-title" id="x402ResultTitle">Service Delivered</div><div class="result-details" id="x402ResultDetails"></div></div></div>
+    </aside>
+  </div>
+</section>
 </main>
 <script>
 
@@ -436,18 +474,107 @@ async function paySelected() {
     el("payButton").disabled = false;
   }
 }
+function x402Log(msg, kind = "") {
+  const row = document.createElement("div");
+  row.className = "log-line";
+  row.innerHTML = `<span class="time">${now()}</span><span class="msg ${kind}">${escapeHtml(msg)}</span>`;
+  el("x402Log").appendChild(row);
+  el("x402Log").scrollTop = el("x402Log").scrollHeight;
+}
+async function loadX402Services() {
+  const host = el("x402ServiceCards");
+  host.innerHTML = `<div class="empty"><span class="loader"></span>Loading x402 services...</div>`;
+  const sel = el("x402ServiceSelect");
+  sel.innerHTML = `<option value="">Loading...</option>`;
+  try {
+    const data = await api("/api/x402/services");
+    const services = data.services || [];
+    if (!services.length) { host.innerHTML = `<div class="empty">No x402 services available.</div>`; return; }
+    host.innerHTML = services.map((s) => `<article class="card">
+      <div class="card-top"><span>[${escapeHtml(s.id)}] ${escapeHtml(s.name)}</span><span>${escapeHtml(s.token)}</span></div>
+      <div class="desc" style="margin-top:10px">${escapeHtml(s.description)}</div>
+      <div class="price">${escapeHtml(s.price)} ${escapeHtml(s.token)} <span class="hint">(${escapeHtml(s.price_usd || "?")})</span></div>
+    </article>`).join("");
+    sel.innerHTML = services.map((s) => `<option value="${escapeHtml(s.id)}">[${s.id}] ${escapeHtml(s.name)} — ${escapeHtml(s.price)} ${escapeHtml(s.token)}</option>`).join("");
+  } catch (err) {
+    host.innerHTML = `<div class="empty">Failed: ${escapeHtml(err.message)}</div>`;
+  }
+}
+async function loadX402Revenue() {
+  try {
+    const data = await api("/api/x402/revenue");
+    const total = parseFloat(data.total_seth || 0).toFixed(6);
+    el("x402RevenueChip").textContent = `revenue: ${total} SETH (${data.total_usd || "$0"})`;
+    if (data.tx_count > 0) el("x402RevenueChip").classList.add("ok");
+    const panel = el("x402RevenuePanel");
+    if (data.tx_count === 0) { panel.innerHTML = `<p class="empty">No revenue yet. Buy a service to see earnings.</p>`; return; }
+    let rows = `<div class="log" style="max-height:250px">`;
+    rows += `<div class="log-line"><span class="time">total</span><span class="msg good"><strong>${data.total_seth} SETH (${data.total_usd})</strong> — ${data.tx_count} tx(s)</span></div>`;
+    for (const [sid, svc] of Object.entries(data.by_service || {})) {
+      rows += `<div class="log-line"><span class="time">#${sid}</span><span class="msg">${escapeHtml(svc.name)}: ${svc.earned_seth} SETH</span></div>`;
+    }
+    rows += `</div>`;
+    panel.innerHTML = rows;
+  } catch (err) {
+    el("x402RevenueChip").textContent = "revenue: error";
+  }
+}
+async function x402Buy() {
+  const sel = el("x402ServiceSelect");
+  const serviceId = parseInt(sel.value);
+  const query = el("x402Query").value.trim();
+  if (!serviceId) { x402Log("Please select a service.", "bad"); return; }
+  el("x402BuyBtn").disabled = true;
+  el("x402BuyBtn").textContent = "Buying...";
+  el("x402Log").innerHTML = "";
+  x402Log(`Buying service #${serviceId}...`, "good");
+  x402Log(`Query: ${query || "no query"}`, "warn");
+  x402Log("Step 1/4: Requesting x402 service...", "warn");
+  try {
+    const result = await api("/api/x402/request", {
+      method: "POST",
+      body: JSON.stringify({ service_id: serviceId, query }),
+    });
+    const content = result.content || "";
+    x402Log("✅ Service delivered!", "good");
+    if (result.tx_hash) x402Log(`Tx: ${result.tx_hash.slice(0,30)}...`, "good");
+    el("x402ResultIcon").textContent = "✅";
+    el("x402ResultTitle").textContent = result.amount_paid ? `Delivered — ${result.amount_paid} paid` : "Service Delivered";
+    el("x402ResultTitle").style.color = "var(--green)";
+    el("x402ResultDetails").innerHTML = `<pre style="font-size:.78rem;line-height:1.45;white-space:pre-wrap;overflow:auto;max-height:300px">${escapeHtml(content.slice(0,600))}</pre>`;
+    el("x402ResultPanel").classList.remove("hidden");
+    await loadX402Revenue();
+  } catch (err) {
+    x402Log(`❌ x402 failed: ${err.message}`, "bad");
+    if (err.message.includes("402")) {
+      x402Log("➡️ Sending request to auto-pay...", "warn");
+      x402Log("This starts a CAW Pact flow. Approve in the mobile app.", "good");
+    }
+  } finally {
+    el("x402BuyBtn").disabled = false;
+    el("x402BuyBtn").textContent = "Buy with CAW";
+  }
+}
 function switchTab(name) {
-  const services = name === "services";
-  el("servicesView").classList.toggle("hidden", !services);
-  el("proofsView").classList.toggle("hidden", services);
-  el("servicesTab").classList.toggle("active", services);
-  el("proofsTab").classList.toggle("active", !services);
-  if (!services) loadProofs();
+  const isServices = name === "services";
+  const isProofs = name === "proofs";
+  const isX402 = name === "x402";
+  el("servicesView").classList.toggle("hidden", !isServices);
+  el("proofsView").classList.toggle("hidden", !isProofs);
+  el("x402View").classList.toggle("hidden", !isX402);
+  el("servicesTab").classList.toggle("active", isServices);
+  el("proofsTab").classList.toggle("active", isProofs);
+  el("x402Tab").classList.toggle("active", isX402);
+  if (isProofs) loadProofs();
+  if (isX402) { loadX402Services(); loadX402Revenue(); }
 }
 el("servicesTab").addEventListener("click", () => switchTab("services"));
 el("proofsTab").addEventListener("click", () => switchTab("proofs"));
+el("x402Tab").addEventListener("click", () => switchTab("x402"));
 el("refreshProofs").addEventListener("click", loadProofs);
+el("refreshRevenue").addEventListener("click", loadX402Revenue);
 el("payButton").addEventListener("click", paySelected);
+el("x402BuyBtn").addEventListener("click", x402Buy);
 el("searchBtn").addEventListener("click", doSearch);
 el("procureBtn").addEventListener("click", doProcure);
 el("searchInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(); } });

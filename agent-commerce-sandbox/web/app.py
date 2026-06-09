@@ -232,6 +232,114 @@ async def api_procure(payload: MatchRequest) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+class X402BuyRequest(BaseModel):
+    service_id: int = 4
+    query: str = ""
+
+
+@app.post("/api/x402/buy")
+async def api_x402_buy(payload: X402BuyRequest) -> dict[str, Any]:
+    """Full x402 auto-pay flow: request → pact → transfer → deliver."""
+    try:
+        from agent_commerce_sandbox.x402_client import X402Client
+        from agent_commerce_sandbox.caw_client import CawClient
+        import json as _json
+
+        caw = CawClient()
+        x402 = X402Client(server_url="http://127.0.0.1:8888")
+        svc = next((s for s in x402.list_services() if s["id"] == payload.service_id), None)
+        if not svc:
+            raise HTTPException(status_code=404, detail=f"x402 service {payload.service_id} not found")
+
+        # Step 1: Get 402 payment info
+        import urllib.request
+        from urllib.error import HTTPError
+        req = urllib.request.Request(
+            f"{x402.server_url}/request",
+            data=_json.dumps({"service_id": payload.service_id, "query": payload.query}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=15)
+            raise RuntimeError("Expected 402 but got 200")
+        except HTTPError as e:
+            if e.code != 402:
+                raise
+            payment = _json.loads(e.read()).get("payment", {})
+
+        # Step 2: Submit pact
+        policies = _json.dumps([{
+            "name": f"x402-pay-{svc['name'].lower().replace(' ','-')[:20]}",
+            "type": "transfer",
+            "rules": {
+                "effect": "allow",
+                "when": {
+                    "chain_in": [payment.get("chain_id", "SETH")],
+                    "token_in": [{"chain_id": payment.get("chain_id", "SETH"), "token_id": payment.get("token_id", "SETH")}],
+                    "destination_address_in": [{"chain_id": payment.get("chain_id", "SETH"), "address": payment.get("address", "")}],
+                },
+                "deny_if": {"amount_usd_gt": "5.00"},
+            },
+        }])
+
+        pact = caw.submit_pact(
+            intent=f"x402 auto-pay: {payment['amount']} {payment['token_id']} for {svc['name']}",
+            policies_json=policies,
+            completion_conditions=_json.dumps([{"type": "tx_count", "threshold": "1"}]),
+            name=f"x402-{svc['name'].lower().replace(' ','-')[:20]}",
+            execution_plan=f"# Summary\\nAuto-pay for {svc['name']} via x402\\n\\n# Operations\\n- Transfer {payment['amount']} {payment['token_id']} to {payment.get('address','')}\\n\\n# Risk Controls\\n- Single transfer",
+        )
+        pact_id = pact.get("pact_id", "")
+        pact_status = pact.get("status", "")
+
+        if pact_status in ("pending_approval", "PENDING_APPROVAL"):
+            # Wait for user to approve in CAW App
+            try:
+                caw.wait_for_pact_active(pact_id, timeout=300)
+            except TimeoutError:
+                return {"status": "pending_approval", "pact_id": pact_id, "error": "Awaiting CAW App approval"}
+
+        # Step 3: Execute transfer
+        tx_result = caw.execute_transfer(
+            pact_id=pact_id,
+            dst_address=payment.get("address", ""),
+            amount=payment.get("amount", svc["price"]),
+            token_id=payment.get("token_id", svc["token"]),
+            chain_id=payment.get("chain_id", svc["chain"]),
+            description=f"x402 auto-pay for {svc['name']}: {payload.query[:80]}",
+        )
+        tx_id = tx_result.get("id", "")
+
+        # Wait for completion
+        tx_complete = caw.wait_for_transaction_complete(tx_id, timeout=180)
+        request_id = tx_result.get("request_id", tx_id)
+
+        # Step 4: Retry x402 with payment proof
+        retry_payload = _json.dumps({"service_id": payload.service_id, "query": payload.query}).encode()
+        retry_req = urllib.request.Request(
+            f"{x402.server_url}/request?tx_hash={request_id}",
+            data=retry_payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        resp = urllib.request.urlopen(retry_req, timeout=30)
+        result = _json.loads(resp.read())
+
+        return json_safe({
+            "status": "completed",
+            "service": svc["name"],
+            "amount_paid": payment.get("amount", ""),
+            "tx_hash": tx_complete.get("transaction_hash", ""),
+            "content": result.get("content", ""),
+        })
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/api/status")
 async def api_status() -> dict[str, Any]:
     status: dict[str, Any] = {
