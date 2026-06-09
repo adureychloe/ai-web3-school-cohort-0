@@ -8,6 +8,10 @@ Usage:
     python run.py pay <service_id> "..." Pay for a service with intent text
     python run.py proof [service_id]    Show delivery proofs (optionally by service)
     python run.py status                Show wallet and contract status
+    python run.py serve [port]          Start x402 service (sell services)
+    python run.py request [id] ["q"]    Buy via x402 (auto-pay with CAW)
+    python run.py revenue               Show x402 server earnings
+    python run.py list-services         List x402 services for sale
 """
 
 import sys
@@ -21,8 +25,9 @@ from agent_commerce_sandbox.procurement_agent import procure
 
 BANNER = """
 ╔══════════════════════════════════════════╗
-║      Agent Commerce Hub v0.4            ║
+║      Agent Commerce Hub v0.5            ║
 ║  On-chain Discovery × CAW Payment       ║
+║  x402 Seller & Buyer                    ║
 ╚══════════════════════════════════════════╝
 """
 
@@ -34,6 +39,10 @@ def print_usage():
     print("  proof [id]            Show delivery proofs")
     print("  status                Show wallet + contract info")
     print('  procure ["request"]   Natural language service procurement')
+    print("  serve                 Start x402 service (sell services)")
+    print('  request <id> ["q"]    Buy via x402 (auto-pay with CAW)')
+    print("  revenue               Show x402 server earnings")
+    print("  list-services         List x402 services for sale")
     print()
 
 
@@ -148,6 +157,49 @@ def main():
     elif cmd == "procure":
         request = args[1] if len(args) >= 2 else ""
         cmd_procure(request)
+
+    elif cmd == "serve":
+        from agent_commerce_sandbox.x402_server import serve as x402_serve
+        port = int(args[1]) if len(args) >= 2 else 8888
+        x402_serve(port=port)
+
+    elif cmd == "request":
+        from agent_commerce_sandbox.x402_client import X402Client
+        service_id = int(args[1]) if len(args) >= 2 else 4
+        query = args[2] if len(args) >= 3 else ""
+        server = os.environ.get("X402_SERVER", "http://127.0.0.1:8888")
+        client = X402Client(server_url=server)
+        client.request(service_id=service_id, query=query)
+
+    elif cmd == "revenue":
+        from agent_commerce_sandbox.x402_client import X402Client
+        server = os.environ.get("X402_SERVER", "http://127.0.0.1:8888")
+        client = X402Client(server_url=server)
+        rev = client.show_revenue()
+        if rev:
+            print(f"\n  📊 x402 Server Revenue")
+            print(f"  ─────────────────────────")
+            print(f"  Total:    {rev.get('total_seth', 0)} SETH ({rev.get('total_usd', '$0')})")
+            print(f"  Tx Count: {rev.get('tx_count', 0)}")
+            for sid, data in rev.get("by_service", {}).items():
+                print(f"  [{sid}] {data['name']}: {data['earned_seth']} SETH")
+            print()
+
+    elif cmd == "list-services":
+        from agent_commerce_sandbox.x402_client import X402Client
+        server = os.environ.get("X402_SERVER", "http://127.0.0.1:8888")
+        client = X402Client(server_url=server)
+        services = client.list_services()
+        if not services:
+            print("  No services available.")
+        else:
+            print(f"\n  x402 Services for sale:")
+            print("  " + "─" * 50)
+            for s in services:
+                print(f"  [{s['id']}] {s['name']}")
+                print(f"       {s['description'][:60]}")
+                print(f"       {s['price']} {s['token']} ({s.get('price_usd', '?')})")
+            print()
 
     elif cmd == "status":
         cmd_status()

@@ -37,6 +37,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount x402 service endpoints
+from agent_commerce_sandbox.x402_server import x402_app
+app.mount("/api/x402", x402_app, name="x402")
+
 
 class PayRequest(BaseModel):
     service_id: int = Field(..., ge=0)
