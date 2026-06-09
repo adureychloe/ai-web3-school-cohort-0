@@ -169,6 +169,10 @@ def main():
         query = args[2] if len(args) >= 3 else ""
         server = os.environ.get("X402_SERVER", "http://127.0.0.1:8888")
         client = X402Client(server_url=server)
+        print(f"\n  🤖 Starting x402 auto-pay in background...")
+        print(f"  Service: [{service_id}] — will auto-pay via CAW")
+        print(f"\n  📱 Open CAW App when prompted to approve the pact")
+        print(f"  ⏳ You'll be notified when complete!\n")
         client.request(service_id=service_id, query=query)
 
     elif cmd == "revenue":
