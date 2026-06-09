@@ -20,11 +20,12 @@ SETH_PRICE_USD = 3000
 _AI_MODEL = "deepseek-v4-flash"
 _AI_ENDPOINT = os.environ.get(
     "AI_MATCH_ENDPOINT",
-    (os.environ.get("ANTHROPIC_BASE_URL", "https://vpsairobot.com").rstrip("/")) + "/v1/chat/completions",
+    "https://api.deepseek.com/v1/chat/completions",
 )
 _AI_KEY = os.environ.get(
     "AI_MATCH_API_KEY",
-    os.environ.get("VPSAIROBOT_API_KEY", os.environ.get("ANTHROPIC_API_KEY", "")),
+    os.environ.get("DEEPSEEK_API_KEY",
+    os.environ.get("OPENAI_API_KEY", "")),
 )
 
 
