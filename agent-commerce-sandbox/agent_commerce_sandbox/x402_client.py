@@ -46,7 +46,7 @@ class X402Client:
     def list_services(self) -> list[dict]:
         """List services available on the x402 server."""
         try:
-            resp = urlopen(f"{self.server_url}/services", timeout=15)
+            resp = urlopen(f"{self.server_url}/services?local=true", timeout=15)
             data = json.loads(resp.read())
             return data.get("services", [])
         except Exception as e:

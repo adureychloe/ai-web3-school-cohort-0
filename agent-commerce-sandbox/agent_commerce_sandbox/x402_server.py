@@ -106,14 +106,25 @@ def _verify_payment(tx_hash: str, expected_amount: str, expected_address: str) -
 
         if is_onchain:
             # On-chain tx hash: verify via web3.py RPC
-            chain = ChainClient()
-            expected_value_wei = Web3.to_wei(float(expected_amount), "ether")
-            verified = chain.verify_tx_onchain(
-                tx_hash=tx_hash,
-                expected_to=expected_address,
-                expected_value_wei=expected_value_wei,
-            )
-            if not verified:
+            # Use a dedicated web3 connection with longer timeout
+            from web3 import Web3
+            rpc_url = "https://ethereum-sepolia-rpc.publicnode.com"
+            w3_check = Web3(Web3.HTTPProvider(
+                rpc_url,
+                request_kwargs={"timeout": 60}
+            ))
+            try:
+                tx = w3_check.eth.get_transaction(tx_hash)
+                receipt = w3_check.eth.get_transaction_receipt(tx_hash)
+                if receipt is None or receipt.get("status") != 1:
+                    return False
+                if tx.get("to", "").lower() != expected_address.lower():
+                    return False
+                actual_value_wei = tx.get("value", 0)
+                expected_value_wei = Web3.to_wei(float(expected_amount), "ether")
+                if actual_value_wei < expected_value_wei:
+                    return False
+            except Exception:
                 return False
         else:
             # CAW request-id (UUID): verify via caw tx get --request-id
@@ -217,6 +228,30 @@ fee optimization opportunities.
 """,
     }
     return analyses.get(service_id, "Analysis not available for this service ID.")
+
+
+def _generate_registry_response(service: dict, query: str = "") -> str:
+    """Generate a response for an off-chain registered service."""
+    ts = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+    name = service["name"]
+    desc = service.get("description", "")
+    tags = ", ".join(service.get("tags", []))
+    return f"""╔══════════════════════════════════════════╗
+║  {name:<38s}║
+║  Generated: {ts}      ║
+╚══════════════════════════════════════════╝
+
+Service Description:
+  {desc}
+
+Tags: {tags or "(none)"}
+
+Request Query: {query or "(no specific query)"}
+
+---
+This service was provided by an off-chain registered Agent.
+Payment verified on-chain via x402 protocol.
+"""
 
 
 # ── Models ──────────────────────────────────────────────────────
@@ -353,8 +388,25 @@ async def x402_request(
         tx_hash: On-chain transaction hash proving payment (optional)
     """
     service = SELLER_SERVICES.get(payload.service_id)
+    is_local = False
     if not service:
-        raise HTTPException(status_code=404, detail=f"Service {payload.service_id} not found")
+        # Check off-chain registry
+        local_svc = _local_registry.get_service(payload.service_id)
+        if not local_svc or not local_svc.get("active", True):
+            raise HTTPException(status_code=404, detail=f"Service {payload.service_id} not found")
+        # Convert local registry format to match SELLER_SERVICES format
+        service = {
+            "id": local_svc["id"],
+            "name": local_svc["name"],
+            "description": local_svc["description"],
+            "price_seth": local_svc["price_seth"],
+            "token_id": local_svc.get("token_id", "SETH"),
+            "chain_id": local_svc.get("chain_id", "SETH"),
+            "payment_address": local_svc.get("provider", WALLET_SETH_ADDR),
+            "tags": local_svc.get("tags", []),
+            "protocol": local_svc.get("protocol", "x402"),
+        }
+        is_local = True
 
     # No payment provided → 402 Payment Required
     if not tx_hash:
@@ -390,6 +442,9 @@ async def x402_request(
 
     # Payment verified → serve content
     analysis = _generate_analysis(payload.service_id)
+    if is_local:
+        # For registered services, generate a generic response
+        analysis = _generate_registry_response(service, payload.query)
 
     # Record revenue
     _revenue[service["id"]] = _revenue.get(service["id"], 0.0) + float(service["price_seth"])
@@ -420,7 +475,8 @@ async def x402_revenue():
         "tx_count": len(_revenue_log),
         "by_service": {
             str(sid): {
-                "name": SELLER_SERVICES[sid]["name"],
+                "name": SELLER_SERVICES[sid]["name"] if sid in SELLER_SERVICES
+                       else (_local_registry.get_service(sid) or {}).get("name", f"Registered #{sid}"),
                 "earned_seth": amt,
             }
             for sid, amt in _revenue.items()

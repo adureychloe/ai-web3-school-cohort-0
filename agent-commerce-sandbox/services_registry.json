@@ -1,0 +1,22 @@
+{
+  "services": {
+    "100": {
+      "id": 100,
+      "name": "AI Research Agent",
+      "description": "Automated blockchain research reports",
+      "price_seth": "0.0002",
+      "token_id": "SETH",
+      "chain_id": "SETH",
+      "provider": "0x9e01312e8e96a8133a3c73bed58a5808ecfceaf5",
+      "endpoint": "http://my-agent:7777/request",
+      "protocol": "x402",
+      "tags": [
+        "research",
+        "blockchain",
+        "reports"
+      ],
+      "active": true,
+      "registered_at": 1781065425.1024146
+    }
+  }
+}
