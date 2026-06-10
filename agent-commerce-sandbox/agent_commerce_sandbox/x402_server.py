@@ -87,7 +87,10 @@ _revenue_log: list[dict] = []
 def _verify_payment(tx_hash: str, expected_amount: str, expected_address: str) -> bool:
     """Verify a CAW transfer by checking the tx on-chain.
 
-    Supports both CAW request-id (UUID format) and on-chain tx hash (0x...).
+    Supports:
+    - CAW request-id (UUID format) → caw tx get --request-id
+    - On-chain tx hash (0x...) → web3.py RPC query
+
     Also checks replay protection: already-used proofs are rejected.
     """
     # Replay protection
@@ -96,41 +99,45 @@ def _verify_payment(tx_hash: str, expected_amount: str, expected_address: str) -
 
     try:
         import subprocess
+        from web3 import Web3
 
-        # Detect proof type: 0x prefix = on-chain tx hash, else CAW request-id
+        # Detect proof type
         is_onchain = tx_hash.startswith("0x")
 
         if is_onchain:
-            # Verify via CAW tx get --tx-hash
-            result = subprocess.run(
-                ["caw", "tx", "get", "--tx-hash", tx_hash],
-                capture_output=True, text=True, timeout=30,
+            # On-chain tx hash: verify via web3.py RPC
+            chain = ChainClient()
+            expected_value_wei = Web3.to_wei(float(expected_amount), "ether")
+            verified = chain.verify_tx_onchain(
+                tx_hash=tx_hash,
+                expected_to=expected_address,
+                expected_value_wei=expected_value_wei,
             )
+            if not verified:
+                return False
         else:
-            # Verify via CAW tx get --request-id
+            # CAW request-id (UUID): verify via caw tx get --request-id
             result = subprocess.run(
                 ["caw", "tx", "get", "--request-id", tx_hash],
                 capture_output=True, text=True, timeout=30,
             )
+            if result.returncode != 0:
+                return False
+            data = json.loads(result.stdout)
 
-        if result.returncode != 0:
-            return False
-        data = json.loads(result.stdout)
+            # Check it's a completed transfer to our address
+            if data.get("status") != "Success":
+                return False
+            if data.get("sub_status") != "completed":
+                return False
+            if data.get("dst_address", "").lower() != expected_address.lower():
+                return False
 
-        # Check it's a completed transfer to our address
-        if data.get("status") != "Success":
-            return False
-        if data.get("sub_status") != "completed":
-            return False
-        if data.get("dst_address", "").lower() != expected_address.lower():
-            return False
-
-        # Amount check (from wei)
-        from web3 import Web3
-        actual_wei = Web3.to_wei(float(data.get("amount", "0")), "ether")
-        expected_wei = Web3.to_wei(float(expected_amount), "ether")
-        if actual_wei < expected_wei:
-            return False
+            # Amount check (from wei)
+            actual_wei = Web3.to_wei(float(data.get("amount", "0")), "ether")
+            expected_wei = Web3.to_wei(float(expected_amount), "ether")
+            if actual_wei < expected_wei:
+                return False
 
         # Mark as used to prevent replay
         _used_proofs.add(tx_hash)
