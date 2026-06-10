@@ -33,14 +33,14 @@ _AI_KEY = os.environ.get(
 
 
 
-def _ai_match(request: str, services: list) -> list:
+def _ai_match(request: str, services: list) -> tuple[list, str]:
     """Use AI to semantically match a request to available services.
 
-    Calls the configured LLM to analyze intent. Falls back to equal scores on error.
-    Returns [(score, service), ...] sorted by relevance.
+    Calls the configured LLM to analyze intent. Falls back to local scoring on error.
+    Returns ([(score, service), ...], source) where source is 'ai' or 'local_fallback'.
     """
     if not _AI_KEY or not services:
-        return [(0, s) for s in services]
+        return [(0, s) for s in services], "local_fallback"
 
     service_list = [
         {"id": s["id"], "name": s["name"], "description": s["description"]}
@@ -91,10 +91,10 @@ def _ai_match(request: str, services: list) -> list:
         ai_by_id = {r["service_id"]: r for r in ai_results if isinstance(r, dict) and "score" in r}
         scored = [(ai_by_id.get(s["id"], {"score": 0})["score"], s) for s in services]
         scored.sort(key=lambda x: (-x[0], x[1]["id"]))
-        return scored
+        return scored, "ai"
     except Exception:
         # Fallback: local semantic scoring via phrase matching
-        return _local_score(request, services)
+        return _local_score(request, services), "local_fallback"
 
 
 def _local_score(request: str, services: list) -> list:
@@ -158,11 +158,12 @@ def _local_score(request: str, services: list) -> list:
     return scored
 
 
-def match_and_rank(request: str, services: list) -> list:
+def match_and_rank(request: str, services: list) -> tuple[list, str]:
     """Use AI-powered semantic matching instead of keyword overlap.
 
     Falls back to equal scores if AI endpoint is unavailable.
-    Returns [(score, svc), ...] sorted by relevance (highest first).
+    Returns ([(score, svc), ...], source) sorted by relevance (highest first),
+    where source is 'ai' or 'local_fallback'.
     """
     return _ai_match(request, services)
 
@@ -354,7 +355,8 @@ def procure(request_text: str) -> dict:
 
     print(f"     Found {len(active)} active service(s) on Sepolia.\n")
 
-    ranked = match_and_rank(request_text, active)
+    ranked, match_source = match_and_rank(request_text, active)
+    print(f"     Match method: {'🤖 AI' if match_source == 'ai' else '📊 Local fallback'}")
     service = _show_match_results(request_text, ranked)
 
     balance = get_balance()

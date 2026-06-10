@@ -34,14 +34,21 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from agent_commerce_sandbox.chain_client import ChainClient
 from agent_commerce_sandbox.caw_client import CawClient, WALLET_SETH_ADDR
+from agent_commerce_sandbox.local_registry import LocalServiceRegistry
 
 x402_app = FastAPI(
     title="Agent Commerce Hub — x402 Service",
     description="HTTP 402 Payment Required endpoint for Agent-to-Agent commerce",
-    version="0.5.0",
+    version="0.6.0",
 )
 
 # ── Data ────────────────────────────────────────────────────────
+
+# Replay protection: track used proof IDs to prevent double-spend
+_used_proofs: set[str] = set()
+
+# Off-chain service registry for provider self-registration
+_local_registry = LocalServiceRegistry()
 
 # Service catalog for what THIS agent sells
 # In production, read from on-chain ServiceRegistry
@@ -80,15 +87,32 @@ _revenue_log: list[dict] = []
 def _verify_payment(tx_hash: str, expected_amount: str, expected_address: str) -> bool:
     """Verify a CAW transfer by checking the tx on-chain.
 
-    Uses etherscan-style verification: checks tx details match expectations.
+    Supports both CAW request-id (UUID format) and on-chain tx hash (0x...).
+    Also checks replay protection: already-used proofs are rejected.
     """
+    # Replay protection
+    if tx_hash in _used_proofs:
+        return False
+
     try:
-        # Use caw to get tx details
         import subprocess
-        result = subprocess.run(
-            ["caw", "tx", "get", "--request-id", tx_hash],
-            capture_output=True, text=True, timeout=30,
-        )
+
+        # Detect proof type: 0x prefix = on-chain tx hash, else CAW request-id
+        is_onchain = tx_hash.startswith("0x")
+
+        if is_onchain:
+            # Verify via CAW tx get --tx-hash
+            result = subprocess.run(
+                ["caw", "tx", "get", "--tx-hash", tx_hash],
+                capture_output=True, text=True, timeout=30,
+            )
+        else:
+            # Verify via CAW tx get --request-id
+            result = subprocess.run(
+                ["caw", "tx", "get", "--request-id", tx_hash],
+                capture_output=True, text=True, timeout=30,
+            )
+
         if result.returncode != 0:
             return False
         data = json.loads(result.stdout)
@@ -108,6 +132,8 @@ def _verify_payment(tx_hash: str, expected_amount: str, expected_address: str) -
         if actual_wei < expected_wei:
             return False
 
+        # Mark as used to prevent replay
+        _used_proofs.add(tx_hash)
         return True
     except Exception:
         return False
@@ -232,25 +258,81 @@ def _payment_required(service: dict) -> JSONResponse:
     )
 
 
+class RegisterRequest(BaseModel):
+    """Request body for provider self-registration."""
+    name: str
+    description: str = ""
+    price_seth: str = "0.00001"
+    endpoint: str = ""
+    tags: list[str] = []
+    protocol: str = "x402"
+
+
 # ── Routes ──────────────────────────────────────────────────────
 
 @x402_app.get("/services")
-async def x402_list_services():
-    """List services this agent sells."""
-    return {
-        "services": [
-            {
+async def x402_services(local: bool = False):
+    """List all x402 services for sale.
+
+    Args:
+        local: If true, include off-chain registered services too.
+    """
+    result = []
+    for s in SELLER_SERVICES.values():
+        result.append({
+            "id": s["id"],
+            "name": s["name"],
+            "description": s["description"],
+            "price": s["price_seth"],
+            "token": s["token_id"],
+            "chain": s["chain_id"],
+            "price_usd": s["price_usd"],
+            "protocol": "x402",
+            "tags": s.get("tags", []),
+        })
+    if local:
+        for s in _local_registry.list_services():
+            result.append({
                 "id": s["id"],
                 "name": s["name"],
                 "description": s["description"],
                 "price": s["price_seth"],
                 "token": s["token_id"],
                 "chain": s["chain_id"],
-                "price_usd": s["price_usd"],
-            }
-            for s in SELLER_SERVICES.values()
-        ]
-    }
+                "price_usd": f"${float(s['price_seth']) * 3000:.2f}",
+                "protocol": s.get("protocol", "x402"),
+                "tags": s.get("tags", []),
+            })
+    return {"services": result}
+
+
+@x402_app.post("/register")
+async def x402_register(payload: RegisterRequest):
+    """Register a new service in the off-chain registry.
+    
+    Any agent can self-register as a service provider.
+    """
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["caw", "status"],
+            capture_output=True, text=True, timeout=15,
+        )
+        status = json.loads(result.stdout)
+        provider = WALLET_SETH_ADDR
+    except Exception:
+        provider = WALLET_SETH_ADDR
+
+    service = _local_registry.register(
+        provider=provider,
+        name=payload.name,
+        description=payload.description,
+        price_seth=payload.price_seth,
+        endpoint=payload.endpoint,
+        tags=payload.tags,
+        protocol=payload.protocol,
+    )
+    return {"status": "registered", "service": service}
 
 
 @x402_app.post("/request")

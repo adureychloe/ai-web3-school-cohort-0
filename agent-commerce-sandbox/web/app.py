@@ -181,7 +181,7 @@ async def api_procure_match(payload: MatchRequest) -> dict[str, Any]:
         chain = await to_thread(ChainClient)
         services = await to_thread(chain.list_services)
         active = [s for s in services if s.get("active", True)]
-        ranked = match_and_rank(payload.request, active)
+        ranked, match_source = match_and_rank(payload.request, active)
 
         matches = []
         for score, s in ranked[:5]:
@@ -199,7 +199,7 @@ async def api_procure_match(payload: MatchRequest) -> dict[str, Any]:
             ))
 
         balance = await to_thread(get_balance)
-        return {"matches": [m.model_dump() for m in matches], "balance": balance}
+        return {"matches": [m.model_dump() for m in matches], "balance": balance, "match_source": match_source}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -214,7 +214,7 @@ async def api_procure(payload: MatchRequest) -> dict[str, Any]:
         if not active:
             raise HTTPException(status_code=404, detail="No active services available")
 
-        ranked = match_and_rank(payload.request, active)
+        ranked, match_source = match_and_rank(payload.request, active)
         best = ranked[0][1]
 
         result = await to_thread(pay_for_service, best["id"], payload.request)
@@ -224,7 +224,8 @@ async def api_procure(payload: MatchRequest) -> dict[str, Any]:
                 "id": best["id"],
                 "name": best["name"],
                 "match_score": ranked[0][0],
-            }
+            },
+            "match_source": match_source,
         })
     except HTTPException:
         raise
@@ -237,7 +238,7 @@ class X402BuyRequest(BaseModel):
     query: str = ""
 
 
-@app.post("/api/x402/buy")
+@app.post("/api/x402-buy")
 async def api_x402_buy(payload: X402BuyRequest) -> dict[str, Any]:
     """Full x402 auto-pay flow: request → pact → transfer → deliver."""
     try:

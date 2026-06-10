@@ -153,6 +153,32 @@ class ChainClient:
         """Get total number of delivery proofs."""
         return self.contract.functions.getProofCount().call()
 
+    def verify_tx_onchain(self, tx_hash: str, expected_to: str, expected_value_wei: int) -> bool:
+        """Verify an on-chain transfer by checking the transaction receipt.
+
+        Args:
+            tx_hash: On-chain transaction hash (0x...).
+            expected_to: Expected recipient address.
+            expected_value_wei: Expected minimum value in wei.
+
+        Returns:
+            True if the tx is confirmed and matches expectations.
+        """
+        if not tx_hash or not tx_hash.startswith("0x"):
+            return False
+        try:
+            tx = self.w3.eth.get_transaction(tx_hash)
+            receipt = self.w3.eth.get_transaction_receipt(tx_hash)
+            if receipt is None or receipt.get("status") != 1:
+                return False
+            if tx.get("to", "").lower() != expected_to.lower():
+                return False
+            if tx.get("value", 0) < expected_value_wei:
+                return False
+            return True
+        except Exception:
+            return False
+
     # ── Write Methods ─────────────────────────────────────
 
     def record_delivery(self, service_id: int, tx_hash: str, summary: str) -> dict:

@@ -221,15 +221,27 @@ function resetResult() {
   log("Terminal reset for new procurement.", "good");
 }
 async function api(path, options = {}) {
-  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
-  const text = await res.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch (err) { data = text; }
-  if (!res.ok) {
-    const detail = data && data.detail ? data.detail : text || res.statusText;
-    throw new Error(detail);
+  const opts = { headers: { "Content-Type": "application/json" }, ...options };
+  const timeout = opts.timeout || 30000;
+  delete opts.timeout;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  opts.signal = controller.signal;
+  try {
+    const res = await fetch(path, opts);
+    clearTimeout(timer);
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch (err) { data = text; }
+    if (!res.ok) {
+      const detail = data && data.detail ? data.detail : text || res.statusText;
+      throw new Error(detail);
+    }
+    return data;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
   }
-  return data;
 }
 function renderStatus(data) {
   const walletClass = data.wallet_healthy ? "ok" : "warn";
@@ -303,13 +315,16 @@ async function doSearch() {
     state.balance = data.balance;
 
     // Re-sort cards by match score with badges
+    const matchSource = data.match_source || "ai";
+    const sourceBadge = matchSource === "ai" ? "🤖 AI" : "📊 Local";
+    log(`Match method: ${sourceBadge}`, "good");
     el("serviceCards").innerHTML = data.matches.map((m) => {
       const svc = state.services.find((s) => Number(s.id) === Number(m.id));
       if (!svc) return "";
       const price = `${m.price_eth} ${svc.tokenId || "SETH"}`;
       const badgeClass = m.match_score > 1 ? "match-badge high" : "match-badge";
       return `<article class="card selected" tabindex="0" role="button" data-service-id="${escapeHtml(m.id)}">
-        <div class="card-top"><span>service #${escapeHtml(m.id)} <span class="${badgeClass}">match ${m.match_score}</span></span><span>${escapeHtml(svc.chainId || "SETH")}</span></div>
+        <div class="card-top"><span>service #${escapeHtml(m.id)} <span class="${badgeClass}">match ${m.match_score}</span> <span class="match-badge">${sourceBadge}</span></span><span>${escapeHtml(svc.chainId || "SETH")}</span></div>
         <h3 class="service-name">${escapeHtml(m.name)}</h3>
         <div class="desc">${escapeHtml(m.description)}</div>
         <div class="price">${escapeHtml(price)} <span class="hint">(${m.price_usd})</span></div>
@@ -527,17 +542,19 @@ async function x402Buy() {
   el("x402BuyBtn").disabled = true;
   el("x402BuyBtn").textContent = "Buying...";
   el("x402Log").innerHTML = "";
-  x402Log(`Buying service #${serviceId}...`, "good");
+  x402Log(`Buying service #${serviceId} via x402 auto-pay...`, "good");
   x402Log(`Query: ${query || "no query"}`, "warn");
-  x402Log("Step 1/4: Requesting x402 service...", "warn");
+  x402Log("⚠️ Check your CAW App — you may need to approve a Pact", "warn");
   try {
-    const result = await api("/api/x402/request", {
+    const result = await api("/api/x402-buy", {
       method: "POST",
       body: JSON.stringify({ service_id: serviceId, query }),
+      timeout: 400000,  // allow up to 400s for approval + transfer
     });
     const content = result.content || "";
     x402Log("✅ Service delivered!", "good");
-    if (result.tx_hash) x402Log(`Tx: ${result.tx_hash.slice(0,30)}...`, "good");
+    if (result.tx_hash) x402Log(`Tx: ${result.tx_hash.slice(0,42)}...`, "good");
+    if (result.amount_paid) x402Log(`Paid: ${result.amount_paid}`, "good");
     el("x402ResultIcon").textContent = "✅";
     el("x402ResultTitle").textContent = result.amount_paid ? `Delivered — ${result.amount_paid} paid` : "Service Delivered";
     el("x402ResultTitle").style.color = "var(--green)";
@@ -545,10 +562,11 @@ async function x402Buy() {
     el("x402ResultPanel").classList.remove("hidden");
     await loadX402Revenue();
   } catch (err) {
-    x402Log(`❌ x402 failed: ${err.message}`, "bad");
-    if (err.message.includes("402")) {
-      x402Log("➡️ Sending request to auto-pay...", "warn");
-      x402Log("This starts a CAW Pact flow. Approve in the mobile app.", "good");
+    x402Log(`❌ Auto-pay failed: ${err.message}`, "bad");
+    if (err.message.includes("pending_approval")) {
+      x402Log("⏳ Pact submitted — approve in CAW App and try again.", "warn");
+    } else if (err.message.includes("402")) {
+      x402Log("➡️ Payment required. Auto-pay flow initiated.", "warn");
     }
   } finally {
     el("x402BuyBtn").disabled = false;

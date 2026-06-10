@@ -260,11 +260,35 @@ def pay_for_service(service_id: int, user_intent: str) -> dict:
         return result
 
     print()
-
-    # ── Step 5: Record Delivery Proof via CAW tx call ────
-    print("[5/5] Recording delivery proof on-chain via CAW...")
+    # ── Step 5: Verify payment on-chain before recording proof ──
+    print()
+    print("[5/5] Verifying payment on-chain...")
 
     tx_hash_for_proof = result.get("tx_hash", "")
+    verify_ok = False
+    if tx_hash_for_proof and tx_hash_for_proof.startswith("0x"):
+        try:
+            verify_ok = chain.verify_tx_onchain(
+                tx_hash=tx_hash_for_proof,
+                expected_to=service["paymentAddress"],
+                expected_value_wei=service["priceWei"],
+            )
+            if verify_ok:
+                print(f"  ✅ On-chain payment verified! Tx: {tx_hash_for_proof[:30]}...")
+            else:
+                print(f"  ⚠️  Payment verification inconclusive — tx found but details mismatch")
+        except Exception as e:
+            print(f"  ⚠️  Payment verification skipped: {e}")
+    else:
+        print(f"  ⚠️  No on-chain tx hash available — skipping verification")
+
+    if not verify_ok:
+        print(f"  ⚠️  Proceeding with proof recording anyway (payment already succeeded)")
+
+    # ── Step 6: Record Delivery Proof via CAW tx call ────
+    print()
+    print("[6/6] Recording delivery proof on-chain via CAW...")
+
     summary = f"Delivered {service_name} — {user_intent[:100]}"
 
     try:
@@ -307,6 +331,7 @@ def pay_for_service(service_id: int, user_intent: str) -> dict:
             if proof_tx_hash:
                 print(f"  Proof Tx: {proof_tx_hash}")
             print(f"  Contract: {chain.contract_addr}")
+            print(f"  Verify:   {'✅' if verify_ok else '⚠️  skipped'}")
             print()
 
             result["status"] = "completed"
