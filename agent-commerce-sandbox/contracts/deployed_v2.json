@@ -1,0 +1,9 @@
+{
+  "chain": "Sepolia",
+  "chain_id": 11155111,
+  "contract_address": "0x3f945ba7BFE2181B506390c0C5e9d2328495Cc40",
+  "deploy_tx_hash": "0x8e6ca555c927a5c9416a0db037ed70847c2592e650ce56ac60d4c281b6e1e18c",
+  "block": 11037821,
+  "deployer": "0x88cbfBD095e9f813B38a5F6f75B1F531897391EE",
+  "rpc_url": "https://ethereum-sepolia-rpc.publicnode.com"
+}

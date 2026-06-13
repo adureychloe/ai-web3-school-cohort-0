@@ -225,6 +225,7 @@ class CawClient:
         chain_id: str = "SETH",
         src_address: str = WALLET_SETH_ADDR,
         description: Optional[str] = None,
+        request_id: Optional[str] = None,
     ) -> dict:
         """Execute a token transfer under an active pact.
 
@@ -236,6 +237,7 @@ class CawClient:
             chain_id: Chain ID (e.g. "SETH")
             src_address: Source address (REQUIRED by CAW API)
             description: Optional description
+            request_id: Optional unique request ID for idempotency
 
         Returns:
             Dict with transfer result (id, status, etc.)
@@ -251,6 +253,8 @@ class CawClient:
         ]
         if description:
             args += ["--description", description]
+        if request_id:
+            args += ["--request-id", request_id]
 
         data = _run_caw(*args, timeout=120)
         return data

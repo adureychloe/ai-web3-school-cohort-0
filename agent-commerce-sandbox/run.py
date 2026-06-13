@@ -167,8 +167,8 @@ def main():
         from agent_commerce_sandbox.x402_client import X402Client
         service_id = int(args[1]) if len(args) >= 2 else 4
         query = args[2] if len(args) >= 3 else ""
-        server = os.environ.get("X402_SERVER", "http://127.0.0.1:8888")
-        client = X402Client(server_url=server)
+        server = os.environ.get("X402_SERVER")
+        client = X402Client(server_url=server) if server else X402Client()
         print(f"\n  🤖 Starting x402 auto-pay in background...")
         print(f"  Service: [{service_id}] — will auto-pay via CAW")
         print(f"\n  📱 Open CAW App when prompted to approve the pact")
@@ -177,8 +177,8 @@ def main():
 
     elif cmd == "revenue":
         from agent_commerce_sandbox.x402_client import X402Client
-        server = os.environ.get("X402_SERVER", "http://127.0.0.1:8888")
-        client = X402Client(server_url=server)
+        server = os.environ.get("X402_SERVER")
+        client = X402Client(server_url=server) if server else X402Client()
         rev = client.show_revenue()
         if rev:
             print(f"\n  📊 x402 Server Revenue")
@@ -191,8 +191,8 @@ def main():
 
     elif cmd == "list-services":
         from agent_commerce_sandbox.x402_client import X402Client
-        server = os.environ.get("X402_SERVER", "http://127.0.0.1:8888")
-        client = X402Client(server_url=server)
+        server = os.environ.get("X402_SERVER")
+        client = X402Client(server_url=server) if server else X402Client()
         services = client.list_services()
         if not services:
             print("  No services available.")

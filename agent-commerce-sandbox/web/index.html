@@ -54,6 +54,16 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
 .search-btn:disabled { opacity:.55; cursor:not-allowed }
 .match-badge { display:inline-block; border-radius:999px; padding:2px 8px; font-size:.7rem; background:rgba(101,216,255,.15); color:var(--cyan) }
 .match-badge.high { background:rgba(91,255,199,.18); color:var(--green) }
+.registry-toggle { display:flex; gap:8px; margin-bottom:16px; align-items:center }
+.reg-btn { font:inherit; cursor:pointer; border:1px solid rgba(255,255,255,.12); border-radius:999px; color:var(--muted); background:rgba(255,255,255,.04); padding:8px 14px; font-size:.82rem }
+.reg-btn.active,.reg-btn:hover { color:var(--green); border-color:rgba(91,255,199,.5); background:rgba(91,255,199,.08) }
+.reg-badge { display:inline-block; border-radius:999px; padding:2px 9px; font-size:.7rem; font-weight:900; letter-spacing:.04em }
+.reg-badge.v1 { background:rgba(101,216,255,.18); color:var(--cyan); border:1px solid rgba(101,216,255,.4) }
+.reg-badge.v2 { background:rgba(255,209,102,.16); color:var(--yellow); border:1px solid rgba(255,209,102,.45) }
+.card.v2 { border-color:rgba(255,209,102,.32) }
+.card.v2:hover { border-color:rgba(255,209,102,.6); background:rgba(26,22,12,.95) }
+.proto-tag { display:inline-block; margin-top:10px; border-radius:8px; padding:2px 8px; font-size:.72rem; background:rgba(255,255,255,.06); color:var(--cyan) }
+.endpoint { margin-top:10px; color:#7fa0b3; overflow-wrap:anywhere; font-size:.74rem }
 .bal-chip { color:var(--green); font-size:.78rem }
 .result-panel { text-align:center; padding:10px 0 }
 .result-icon { font-size:3rem; line-height:1.2; margin-bottom:6px }
@@ -73,9 +83,50 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
 </style>
 </head>
 
-<body>
+  <body>
+<!-- ── Seller Wallet Connect (EIP-6963 标准) ── -->
+<div id="sellerWalletModal" class="hidden" style="position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;background:rgba(6,8,13,.88);backdrop-filter:blur(6px)">
+  <div style="width:min(440px,calc(100% - 32px));border:1px solid rgba(255,255,255,.12);border-radius:24px;background:var(--panel);box-shadow:0 30px 80px rgba(0,0,0,.5);overflow:hidden;padding:24px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <h2 style="margin:0;font-size:1.2rem;font-weight:700">连接钱包</h2>
+      <button id="closeSellerModal" type="button" style="background:none;border:none;color:var(--muted);font-size:1.4rem;cursor:pointer;padding:4px 10px;border-radius:50%">✕</button>
+    </div>
+    <!-- EIP-6963 已安装钱包列表 -->
+    <div id="eip6963Section" style="margin-top:10px">
+      <div style="font-size:.78rem;color:var(--muted);margin-bottom:10px;font-weight:600">已安装</div>
+      <div id="eip6963WalletList" style="display:flex;flex-direction:column;gap:2px;margin-bottom:4px">
+        <!-- Populated by JS via EIP-6963 -->
+        <div style="padding:10px;text-align:center;color:var(--muted);font-size:.82rem">检测钱包中...</div>
+      </div>
+    </div>
+    <!-- 流行钱包 -->
+    <div id="popularSection" style="margin-top:2px">
+      <div style="font-size:.78rem;color:var(--muted);margin-bottom:10px;font-weight:600">流行</div>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <button type="button" id="wcOptionBtn" class="wallet-option" data-wallet="walletconnect" style="display:flex;align-items:center;gap:14px;width:100%;padding:14px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);color:var(--text);font:inherit;font-size:.9rem;cursor:pointer;text-align:left">
+          <span style="width:40px;height:40px;display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg width="28" height="28" viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="14" fill="#3396FF"/><path d="M8.5 11.5C11.5 8.5 16.5 8.5 19.5 11.5L20.2 12.2C20.4 12.4 20.4 12.7 20.2 12.9L17.8 15.3C17.7 15.4 17.5 15.4 17.4 15.3L16.9 14.8C14.8 12.7 11.2 12.7 9.1 14.8L8.5 15.4C8.4 15.5 8.2 15.5 8.1 15.4L5.7 12.9C5.5 12.7 5.5 12.4 5.7 12.2L6.4 11.5H8.5Z" fill="white"/></svg></span>
+          <div style="flex:1"><div style="font-weight:600;font-size:.92rem">WalletConnect</div><div style="font-size:.74rem;color:var(--muted)">扫码连接手机钱包</div></div>
+        </button>
+        <button type="button" id="manualOptionBtn" class="wallet-option" data-wallet="manual" style="display:flex;align-items:center;gap:14px;width:100%;padding:14px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);color:var(--text);font:inherit;font-size:.9rem;cursor:pointer;text-align:left">
+          <span style="width:40px;height:40px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:1.4rem">🔑</span>
+          <div style="flex:1"><div style="font-weight:600;font-size:.92rem">手动输入地址</div><div style="font-size:.74rem;color:var(--muted)">粘贴您的钱包地址</div></div>
+        </button>
+      </div>
+    </div>
+    <!-- 手动输入区域 -->
+    <div id="sellerManualInput" class="hidden" style="display:flex;gap:8px;padding-top:16px;margin-top:12px;border-top:1px solid rgba(255,255,255,.08)">
+      <input id="sellerManualAddrInput" type="text" placeholder="0x..." style="flex:1;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:var(--text);padding:10px 12px;font:inherit;outline:none;font-size:.82rem">
+      <button id="sellerManualConfirm" class="ghost" type="button" style="border-radius:12px;padding:10px 14px;font-size:.82rem">连接</button>
+    </div>
+    <div id="sellerModalError" style="margin-top:12px;font-size:.78rem;color:var(--muted);line-height:1.5"></div>
+  </div>
+</div>
+<style>
+.wallet-option:hover{background:rgba(91,255,199,.06);border-color:rgba(91,255,199,.25);transform:translateY(-1px);transition:.12s ease}
+.wallet-option:active{transform:translateY(0)}
+</style>
 <main class="shell">
-<header>
+<header style="position:sticky;position:-webkit-sticky">
   <div class="brand"><div class="logo">ACH</div><div><h1>Agent Commerce Hub</h1><div class="subtitle">On-chain service discovery × CAW payments × delivery proofs</div></div></div>
   <div id="statusbar" class="statusbar"><span class="chip warn"><span class="loader"></span>checking status</span></div>
 </header>
@@ -90,7 +141,15 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
     <button class="search-btn" id="searchBtn" type="button">Find Service</button>
     <button class="search-btn" id="procureBtn" type="button" style="background:linear-gradient(135deg,var(--yellow),var(--green))">Find & Pay</button>
   </div>
-  <div class="grid"><div><div id="serviceCards" class="cards"><div class="empty"><span class="loader"></span>Discovering services on Sepolia...</div></div></div>
+  <div class="registry-toggle" role="tablist" aria-label="Registry version">
+    <span class="hint" style="margin-right:4px">Registry:</span>
+    <button class="reg-btn active" id="regV1Btn" type="button">V1 <span class="reg-badge v1" style="margin-left:4px">V1</span></button>
+    <button class="reg-btn" id="regV2Btn" type="button">V2 <span class="reg-badge v2" style="margin-left:4px">V2</span></button>
+  </div>
+  <div class="grid"><div>
+    <div id="serviceCards" class="cards"><div class="empty"><span class="loader"></span>Discovering services on Sepolia...</div></div>
+    <div id="serviceCardsV2" class="cards hidden"><div class="empty"><span class="loader"></span>Loading V2 services...</div></div>
+  </div>
 <aside class="panel" id="paymentPanel"><h2>Select a service</h2><p>Choose a card or use the search bar above to auto-match a service to your needs. The Pay button submits a CAW pact, waits for approval, sends the transfer, and records delivery proof.</p>
 <div id="paymentBody" class="hidden"><p id="selectedMeta"></p><p id="balanceInfo" class="bal-chip" style="margin:0 0 12px"></p><label for="intent">Intent</label><textarea id="intent" placeholder="Describe what you want the provider agent to do..."></textarea><div class="actions"><button id="payButton" class="primary" type="button">Pay with CAW</button><span class="hint">Keep this tab open while CAW approval is pending.</span></div></div>
 <div class="log" id="log" aria-live="polite"><div class="log-line"><span class="time">ready</span><span class="msg">Terminal log initialized.</span></div></div>
@@ -113,19 +172,77 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
         <div class="toolbar"><div><h3>📊 Revenue</h3></div><button class="ghost" id="refreshRevenue" type="button">Refresh</button></div>
         <div id="x402RevenuePanel"><p class="empty">No revenue data yet.</p></div>
       </div>
+      <!-- ── Register Service ── -->
+      <div class="panel" style="margin-top:18px">
+        <div class="toolbar"><div><h3>🛒 Register Service</h3><span class="hint">Sell your own service</span></div>
+          <button class="ghost" id="toggleRegisterForm" type="button">＋ New</button>
+        </div>
+        <div id="registerForm" class="hidden" style="border-top:1px solid rgba(255,255,255,.09);padding-top:14px">
+          <!-- Seller wallet (universal wallet selector modal) -->
+          <div style="margin-bottom:12px;padding:10px;border:1px solid rgba(255,209,102,.3);border-radius:12px;background:rgba(255,209,102,.06)">
+            <div style="font-size:.78rem;color:var(--yellow);margin-bottom:8px">👤 Seller Wallet</div>
+            <div id="registerWalletConnected" class="hidden" style="margin-bottom:8px;font-size:.82rem;overflow-wrap:anywhere">
+              ✅ Connected: <strong id="registerWalletAddr" style="color:var(--green)"></strong>
+              <button class="ghost" id="registerDisconnectWallet" type="button" style="margin-left:6px;padding:2px 8px;font-size:.7rem">disconnect</button>
+            </div>
+            <div id="registerWalletConnectArea">
+              <button id="openWalletModalBtn" type="button" style="width:100%;border-radius:14px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.04);color:var(--text);padding:12px;font:inherit;font-size:.88rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">
+                <span>🔗</span> Connect Wallet <span style="color:var(--muted);font-size:.75rem">· MetaMask · WalletConnect · more</span>
+              </button>
+            </div>
+            <div style="font-size:.72rem;color:var(--muted);margin-top:6px">💡 Seller wallet ≠ CAW buyer wallet. Use MetaMask, Rabby, or any EOA.</div>
+          </div>
+          <label for="regName">Service Name</label>
+          <input id="regName" type="text" placeholder="e.g. ETH Market Analysis" style="width:100%;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:var(--text);padding:10px 12px;font:inherit;outline:none;font-size:.82rem;box-sizing:border-box">
+          <label for="regDesc">Description</label>
+          <textarea id="regDesc" placeholder="Describe what your service does..." style="width:100%;min-height:60px;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:var(--text);padding:10px 12px;font:inherit;outline:none;font-size:.82rem;box-sizing:border-box"></textarea>
+          <div style="display:flex;gap:10px;margin-top:10px">
+            <div style="flex:1">
+              <label for="regPrice">Price (SETH)</label>
+              <input id="regPrice" type="text" placeholder="0.00005" value="0.00005" style="width:100%;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:var(--text);padding:10px 12px;font:inherit;outline:none;font-size:.82rem;box-sizing:border-box">
+            </div>
+            <div style="flex:1">
+              <label for="regEndpoint">Endpoint URI <span class="hint">(auto-filled if empty)</span></label>
+              <input id="regEndpoint" type="text" placeholder="http://localhost:8888" style="width:100%;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:var(--text);padding:10px 12px;font:inherit;outline:none;font-size:.82rem;box-sizing:border-box">
+            </div>
+          </div>
+          <div class="actions" style="margin-top:14px">
+            <button class="primary" id="registerServiceBtn" type="button">📝 Register on Chain</button>
+            <span class="hint">Writes to ServiceRegistryV2 on Sepolia</span>
+          </div>
+          <div id="registerLog" style="margin-top:10px;font-size:.82rem;color:var(--muted);line-height:1.5"></div>
+        </div>
+      </div>
     </div>
-    <aside class="panel">
-      <h3>🤖 Buy via x402</h3>
-      <p>Enter a request. Agent auto-pays via CAW Pact → Transfer → gets result.</p>
+    <aside class="panel" style="position:relative">
+      <h3>🤖 Buy via CAW Auto-Pay</h3>
+      <p>Connect your CAW wallet → one-click buy → approve in CAW App → content auto-delivered.</p>
+      <div id="visitorWalletInfo" class="hidden" style="background:rgba(91,255,199,.08);border:1px solid rgba(91,255,199,.25);border-radius:12px;padding:10px 12px;margin-bottom:12px;font-size:.82rem">
+        <span style="color:var(--green)">✅</span> Wallet: <strong style="color:var(--green);overflow-wrap:anywhere" id="visitorWalletDisplay"></strong>
+        <button class="ghost" id="x402DisconnectWalletBtn" type="button" style="margin-left:8px;padding:2px 8px;font-size:.7rem">disconnect</button>
+      </div>
       <label for="x402ServiceSelect">Service</label>
       <select id="x402ServiceSelect" style="width:100%;border-radius:14px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.28);color:var(--text);padding:12px 14px;font:inherit;outline:none;margin-bottom:8px"></select>
       <label for="x402Query">Your request</label>
-      <textarea id="x402Query" placeholder="e.g. ETH市场深度分析" style="min-height:80px"></textarea>
-      <div class="actions">
-        <button class="primary" id="x402BuyBtn" type="button">Buy with CAW</button>
-        <span class="hint">Approve pact in CAW App.</span>
+      <textarea id="x402Query" placeholder="e.g. ETH market analysis" style="min-height:80px"></textarea>
+
+      <!-- Wallet connect area -->
+      <div id="x402WalletConnect" class="actions" style="margin-top:6px">
+        <div style="display:flex;gap:8px;width:100%">
+          <input id="x402WalletInput" type="text" placeholder="Your CAW wallet address (0x...)" style="flex:1;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:var(--text);padding:10px 12px;font:inherit;outline:none;font-size:.82rem">
+          <button class="ghost" id="x402ConnectWalletBtn" type="button" style="border-radius:12px;padding:10px 14px;font-size:.82rem;white-space:nowrap">Connect</button>
+        </div>
       </div>
-      <div class="log" id="x402Log" aria-live="polite"><div class="log-line"><span class="time">ready</span><span class="msg">x402 terminal ready.</span></div></div>
+
+      <!-- Buy button -->
+      <div class="actions" style="margin-top:12px">
+        <button class="primary" id="x402BuyBtn" type="button" disabled style="width:100%">
+          <span id="x402BuyBtnText">🤖 Buy with CAW</span>
+        </button>
+        <span class="hint">Server creates Pact → approve in CAW App → auto-delivers</span>
+      </div>
+
+      <div class="log" id="x402Log" aria-live="polite"><div class="log-line"><span class="time">ready</span><span class="msg">x402 ready. Connect CAW wallet to buy.</span></div></div>
       <div id="x402ResultPanel" class="hidden" style="margin-top:14px;border:1px solid rgba(91,255,199,.2);border-radius:16px;padding:16px;background:rgba(12,18,28,.95)"><div class="result-panel"><div class="result-icon" id="x402ResultIcon">✅</div><div class="result-title" id="x402ResultTitle">Service Delivered</div><div class="result-details" id="x402ResultDetails"></div></div></div>
     </aside>
   </div>
@@ -246,14 +363,27 @@ async function api(path, options = {}) {
 function renderStatus(data) {
   const walletClass = data.wallet_healthy ? "ok" : "warn";
   const walletText = data.wallet_healthy ? "wallet healthy" : "wallet not healthy";
+  const walletHtml = connectedWallet
+    ? `<span id="walletChip" class="chip ok" style="cursor:pointer" title="Click to disconnect">🔗 <span id="walletAddr">${short(connectedWallet, 10, 8)}</span></span>`
+    : ``;
   el("statusbar").innerHTML = `
     <span class="chip ${walletClass}">${walletText}</span>
     <span class="chip">services ${escapeHtml(data.service_count ?? 0)}</span>
     <span class="chip">proofs ${escapeHtml(data.proof_count ?? 0)}</span>
-    <span class="chip" title="${escapeHtml(data.contract_address || "")}">contract ${escapeHtml(short(data.contract_address || "unknown"))}</span>`;
+    <span class="chip" title="${escapeHtml(data.contract_address || "")}">contract ${escapeHtml(short(data.contract_address || "unknown"))}</span>
+    ${walletHtml}`;
+  // Re-bind wallet events
+  const walletChip = document.getElementById("walletChip");
+  if (walletChip) walletChip.addEventListener("click", disconnectWallet);
 }
+// Cache last status for re-renders (wallet connect/disconnect)
+let lastStatus = null;
+
 async function loadStatus() {
-  try { renderStatus(await api("/api/status")); }
+  try {
+    lastStatus = await api("/api/status");
+    renderStatus(lastStatus);
+  }
   catch (err) { el("statusbar").innerHTML = `<span class="chip warn">status error: ${escapeHtml(err.message)}</span>`; }
 }
 
@@ -367,14 +497,14 @@ async function doProcure() {
   log("Matching best service...", "warn");
   try {
     const result = await api("/api/procure", { method: "POST", body: JSON.stringify({ request: query }) });
-    
+
     const ms = result.matched_service;
     if (ms) {
       log(`Matched: ${ms.name} (score: ${ms.match_score})`, "good");
       // Select the matched service card
       selectService(ms.id);
     }
-    
+
     if (result.pact) {
       const pid = result.pact.pact_id || result.pact.id || "";
       log(`Pact: ${pid ? pid.slice(0,12)+"..." : "submitted"}`, "good");
@@ -386,7 +516,7 @@ async function doProcure() {
     if (result.proof) {
       log(`Delivery proof recorded on-chain!`, "good");
     }
-    
+
     if (result.status === "completed") {
       log(`✅ Procurement complete!`, "good");
     } else if (result.status === "pending_approval") {
@@ -396,7 +526,7 @@ async function doProcure() {
     }
 
     showResult(result, ms ? ms.name : "");
-    
+
     await loadStatus();
     await loadProofs();
   } catch (err) {
@@ -489,6 +619,77 @@ async function paySelected() {
     el("payButton").disabled = false;
   }
 }
+function renderContent(content) {
+  if (!content) return '<p class="empty">No content returned.</p>';
+  const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
+
+  // Parse header (first ╔═══ block)
+  const headerLines = [];
+  let i = 0;
+  while (i < lines.length && (lines[i].includes('╔') || lines[i].includes('║') || lines[i].includes('╚'))) {
+    const clean = lines[i].replace(/[╔╗╚╝║═]/g, '').trim();
+    if (clean) headerLines.push(clean);
+    i++;
+  }
+
+  let html = '';
+
+  // Header card
+  if (headerLines.length) {
+    const title = headerLines[0] || '';
+    const subLine = headerLines.slice(1).find(l => l.startsWith('Generated'));
+    html += `<div style="background:linear-gradient(135deg,rgba(91,255,199,.12),rgba(101,216,255,.08));border:1px solid rgba(91,255,199,.35);border-radius:14px;padding:14px 16px;margin-bottom:14px;text-align:center">
+      <div style="font-size:1.1rem;font-weight:900;color:var(--green);letter-spacing:-.02em">${escapeHtml(title)}</div>
+      ${subLine ? `<div style="font-size:.72rem;color:var(--muted);margin-top:6px">${escapeHtml(subLine.replace(/^Generated:\s*/,''))}</div>` : ''}
+    </div>`;
+  }
+
+  // Parse key-value pairs and sections
+  let sectionHtml = '';
+  let currentSection = '';
+  const rows = [];
+
+  for (const line of lines.slice(i)) {
+    if (line.startsWith('---')) continue;
+    if (line.endsWith(':') && !line.includes(' ')) {
+      currentSection = line.replace(':', '');
+      continue;
+    }
+    if (line.includes(':') && !line.startsWith('Delivered')) {
+      const sep = line.indexOf(':');
+      const label = line.slice(0, sep).trim();
+      const value = line.slice(sep + 1).trim();
+      if (label && value) {
+        rows.push({ label, value });
+        continue;
+      }
+    }
+    // Plain text line
+    rows.push({ label: '', value: line });
+  }
+
+  if (rows.length) {
+    sectionHtml = rows.map(r => {
+      const valClass =
+        r.value.startsWith('$') || r.value.includes('SETH') ? 'good' :
+        r.value.includes('x402') ? 'warn' : '';
+      return r.label
+        ? `<div class="result-row"><span class="label">${escapeHtml(r.label)}</span><span class="value ${valClass}">${escapeHtml(r.value)}</span></div>`
+        : `<div class="result-row" style="grid-template-columns:1fr"><span class="value" style="text-align:left;color:var(--muted);font-style:italic">${escapeHtml(r.value)}</span></div>`;
+    }).join('');
+  }
+
+  // Delivery footer
+  const deliveryLine = lines.find(l => l.startsWith('Delivered'));
+
+  html += `<div class="result-details">${sectionHtml}</div>`;
+  if (deliveryLine) {
+    html += `<div style="font-size:.72rem;color:var(--muted);text-align:center;border-top:1px solid rgba(255,255,255,.08);padding-top:10px">${escapeHtml(deliveryLine)}</div>`;
+  }
+
+  return html;
+}
+
 function x402Log(msg, kind = "") {
   const row = document.createElement("div");
   row.className = "log-line";
@@ -534,45 +735,6 @@ async function loadX402Revenue() {
     el("x402RevenueChip").textContent = "revenue: error";
   }
 }
-async function x402Buy() {
-  const sel = el("x402ServiceSelect");
-  const serviceId = parseInt(sel.value);
-  const query = el("x402Query").value.trim();
-  if (!serviceId) { x402Log("Please select a service.", "bad"); return; }
-  el("x402BuyBtn").disabled = true;
-  el("x402BuyBtn").textContent = "Buying...";
-  el("x402Log").innerHTML = "";
-  x402Log(`Buying service #${serviceId} via x402 auto-pay...`, "good");
-  x402Log(`Query: ${query || "no query"}`, "warn");
-  x402Log("⚠️ Check your CAW App — you may need to approve a Pact", "warn");
-  try {
-    const result = await api("/api/x402-buy", {
-      method: "POST",
-      body: JSON.stringify({ service_id: serviceId, query }),
-      timeout: 400000,  // allow up to 400s for approval + transfer
-    });
-    const content = result.content || "";
-    x402Log("✅ Service delivered!", "good");
-    if (result.tx_hash) x402Log(`Tx: ${result.tx_hash.slice(0,42)}...`, "good");
-    if (result.amount_paid) x402Log(`Paid: ${result.amount_paid}`, "good");
-    el("x402ResultIcon").textContent = "✅";
-    el("x402ResultTitle").textContent = result.amount_paid ? `Delivered — ${result.amount_paid} paid` : "Service Delivered";
-    el("x402ResultTitle").style.color = "var(--green)";
-    el("x402ResultDetails").innerHTML = `<pre style="font-size:.78rem;line-height:1.45;white-space:pre-wrap;overflow:auto;max-height:300px">${escapeHtml(content.slice(0,600))}</pre>`;
-    el("x402ResultPanel").classList.remove("hidden");
-    await loadX402Revenue();
-  } catch (err) {
-    x402Log(`❌ Auto-pay failed: ${err.message}`, "bad");
-    if (err.message.includes("pending_approval")) {
-      x402Log("⏳ Pact submitted — approve in CAW App and try again.", "warn");
-    } else if (err.message.includes("402")) {
-      x402Log("➡️ Payment required. Auto-pay flow initiated.", "warn");
-    }
-  } finally {
-    el("x402BuyBtn").disabled = false;
-    el("x402BuyBtn").textContent = "Buy with CAW";
-  }
-}
 function switchTab(name) {
   const isServices = name === "services";
   const isProofs = name === "proofs";
@@ -592,11 +754,280 @@ el("x402Tab").addEventListener("click", () => switchTab("x402"));
 el("refreshProofs").addEventListener("click", loadProofs);
 el("refreshRevenue").addEventListener("click", loadX402Revenue);
 el("payButton").addEventListener("click", paySelected);
-el("x402BuyBtn").addEventListener("click", x402Buy);
 el("searchBtn").addEventListener("click", doSearch);
 el("procureBtn").addEventListener("click", doProcure);
 el("searchInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(); } });
 el("resetResultBtn").addEventListener("click", resetResult);
+// ── Wallet Connection ──────────────────────────────
+let connectedWallet = null;
+
+function disconnectWallet() {
+  connectedWallet = null;
+  renderStatus(lastStatus || {});
+  el("x402WalletConnect").classList.remove("hidden");
+  el("visitorWalletInfo").classList.add("hidden");
+  el("x402BuyBtn").disabled = true;
+  x402Log("Wallet disconnected.", "warn");
+}
+
+// Connect CAW wallet by address
+function connectCAWWallet() {
+  const addr = el("x402WalletInput").value.trim().toLowerCase();
+  if (!addr || !addr.startsWith("0x") || addr.length < 40) {
+    x402Log("Please enter a valid Ethereum address starting with 0x.", "bad");
+    return;
+  }
+  connectedWallet = addr;
+  el("x402WalletInput").value = "";
+  el("x402WalletConnect").classList.add("hidden");
+  el("visitorWalletDisplay").textContent = `${short(addr, 10, 8)}`;
+  el("visitorWalletInfo").classList.remove("hidden");
+  el("x402BuyBtn").disabled = false;
+  renderStatus(lastStatus || {});
+  x402Log(`🔗 CAW wallet connected: ${addr.slice(0,14)}...`, "good");
+}
+
+el("x402ConnectWalletBtn").addEventListener("click", connectCAWWallet);
+el("x402WalletInput").addEventListener("keydown", (e) => { if (e.key === "Enter") connectCAWWallet(); });
+el("x402DisconnectWalletBtn").addEventListener("click", disconnectWallet);
+
+// ── Updated x402 Buy Flow (CAW Pact auto-pay) ─────────
+async function x402Buy() {
+  const sel = el("x402ServiceSelect");
+  const serviceId = parseInt(sel.value);
+  const query = el("x402Query").value.trim();
+  if (!serviceId) { x402Log("Please select a service.", "bad"); return; }
+  if (!connectedWallet) { x402Log("Please connect your CAW wallet first.", "bad"); return; }
+  el("x402BuyBtn").disabled = true;
+  el("x402BuyBtnText").innerHTML = '<span class="loader"></span> Buying...';
+  el("x402Log").innerHTML = "";
+  x402Log(`🔗 Connected wallet: ${connectedWallet.slice(0,14)}...`, "good");
+  x402Log(`🤖 Buying service #${serviceId} via CAW auto-pay...`, "good");
+  x402Log(`⏳ Creating Pact...`, "warn");
+  try {
+    const result = await api("/api/x402-buy", {
+      method: "POST",
+      body: JSON.stringify({ service_id: serviceId, query, wallet_address: connectedWallet }),
+      timeout: 400000,  // allow up to 400s for CAW approval + transfer
+    });
+    const content = result.content || "";
+    x402Log("✅ Payment complete — content delivered!", "good");
+    if (result.tx_hash) x402Log(`Tx: ${result.tx_hash.slice(0,42)}...`, "good");
+    if (result.amount_paid) x402Log(`Paid: ${result.amount_paid}`, "good");
+    el("x402ResultIcon").textContent = "✅";
+    el("x402ResultTitle").textContent = result.amount_paid ? `Delivered — ${result.amount_paid} paid` : "Service Delivered";
+    el("x402ResultTitle").style.color = "var(--green)";
+    el("x402ResultDetails").innerHTML = renderContent(content);
+    el("x402ResultPanel").classList.remove("hidden");
+    await loadX402Revenue();
+  } catch (err) {
+    x402Log(`❌ Auto-pay failed: ${err.message}`, "bad");
+    if (err.message.includes("pending_approval")) {
+      x402Log("⏳ Pact submitted — approve in CAW App and try again.", "warn");
+    }
+  } finally {
+    el("x402BuyBtn").disabled = false;
+    el("x402BuyBtnText").textContent = "🤖 Buy with CAW";
+  }
+}
+el("x402BuyBtn").addEventListener("click", x402Buy);
+
+// ── Register Service ────────────────────────────────
+let registerWallet = null;
+el("toggleRegisterForm").addEventListener("click", () => {
+  el("registerForm").classList.toggle("hidden");
+});
+function regLog(msg, kind = "") {
+  el("registerLog").innerHTML = `<span style="color:var(--${kind === 'bad' ? 'red' : kind === 'good' ? 'green' : 'muted'})">${msg}</span>`;
+}
+// Seller wallet connection
+function showSellerModal() { el("sellerWalletModal").classList.remove("hidden"); el("sellerManualInput").classList.add("hidden"); el("sellerModalError").innerHTML = ""; }
+function hideSellerModal() { el("sellerWalletModal").classList.add("hidden"); }
+function setSellerError(msg) { el("sellerModalError").innerHTML = '<span style="color:var(--red)">' + msg + '</span>'; }
+function setSellerConnected(addr) {
+  registerWallet = addr.toLowerCase();
+  el("registerWalletConnected").classList.remove("hidden");
+  el("registerWalletAddr").textContent = registerWallet;
+  el("registerWalletConnectArea").classList.add("hidden");
+  hideSellerModal();
+}
+
+el("openWalletModalBtn").addEventListener("click", function() {
+  showSellerModal();
+  // Each time modal opens, re-scan for EIP-6963 wallets
+  scanEIP6963Wallets();
+});
+el("closeSellerModal").addEventListener("click", hideSellerModal);
+el("sellerWalletModal").addEventListener("click", function(e) { if (e.target === el("sellerWalletModal")) hideSellerModal(); });
+
+// ── EIP-6963 Wallet Discovery ──
+var eip6963Providers = [];
+function scanEIP6963Wallets() {
+  eip6963Providers = [];
+  el("eip6963WalletList").innerHTML = '<div style="padding:10px;text-align:center;color:var(--muted);font-size:.82rem"><span class="loader"></span>检测钱包中...</div>';
+
+  var handler = function(e) {
+    var info = e.detail.info;
+    var provider = e.detail.provider;
+    if (!info || !provider) return;
+
+    // Deduplicate by rdns
+    var exists = eip6963Providers.some(function(p) { return p.info && p.info.rdns === info.rdns; });
+    if (exists) return;
+
+    eip6963Providers.push({ info: info, provider: provider });
+    renderEIP6963Wallets();
+  };
+
+  window.addEventListener("eip6963:announceProvider", handler);
+  window.dispatchEvent(new Event("eip6963:requestProvider"));
+
+  // Timeout: if no wallets detected after 1.5s, show empty state
+  setTimeout(function() {
+    if (eip6963Providers.length === 0) {
+      el("eip6963WalletList").innerHTML = '<div style="padding:10px;text-align:center;color:var(--muted);font-size:.82rem">未检测到已安装的钱包</div>';
+    }
+  }, 1500);
+}
+
+var WALLET_ICONS = {
+  "io.metamask": "<svg width=\"28\" height=\"28\" viewBox=\"0 0 48 48\"><path d=\"M38.5 5L25.6 15.1l2.4-5.7L38.5 5z\" fill=\"#E2761B\"/><path d=\"M9.5 5l12.7 10.2-2.2-5.8L9.5 5z\" fill=\"#E2761B\"/><path d=\"M33.2 30.3l-3.4 5.2 7.3 2 2.1-7.1-6-.1z\" fill=\"#E2761B\"/><path d=\"M8.9 30.4l2 7.1 7.3-2-3.4-5.2-5.9.1z\" fill=\"#E2761B\"/><path d=\"M17.1 22l-2 3 7.2.3-.2-7.8-5 4.5z\" fill=\"#D7C1B3\"/><path d=\"M30.9 22l-5.1-4.6-.1 7.8 7.2-.3-2-3z\" fill=\"#D7C1B3\"/><path d=\"M17.4 35.5l4.4-2.1-3.8-3-6 1.6 5.4 3.5z\" fill=\"#D7C1B3\"/><path d=\"M26.2 33.4l4.4 2.1 5.4-3.5-6-1.6-3.8 3z\" fill=\"#D7C1B3\"/><path d=\"M35.5 35.3l-7.3-2 .7 2.7-.1 1.2 6.7-1.9z\" fill=\"#C0AD9F\"/><path d=\"M12.5 35.3l6.7 1.9-.1-1.2.7-2.7-7.3 2z\" fill=\"#C0AD9F\"/><path d=\"M13.8 28.5l3.9 1.4-3.7-5.5-.2 4.1z\" fill=\"#C0AD9F\"/><path d=\"M34.2 28.5l-.2-4.1-3.7 5.5 3.9-1.4z\" fill=\"#C0AD9F\"/><path d=\"M19.8 29.9l-4.9-2.3.7 3.4 4.2 1.1V29.9z\" fill=\"#C0AD9F\"/><path d=\"M33.1 27.6l-4.9 2.3v2.2l4.2-1.1.7-3.4z\" fill=\"#C0AD9F\"/><path d=\"M30.9 35.5l-4.4-2.1-.3 1.4v1.5l4.7-1.7v.9z\" fill=\"#C0AD9F\"/><path d=\"M17.4 35.5l4.7 1.7v-1.5l-.3-1.4-4.4 2.1v-.9z\" fill=\"#C0AD9F\"/><path d=\"M28.1 37.2l.3-1.7-.3-.1h-4.2l-.3.1.3 1.7-.1 1.5.1 1.4 4.2-2.9z\" fill=\"#C0AD9F\"/></svg>",
+  "app.phantom": "<svg width=\"28\" height=\"28\" viewBox=\"0 0 128 128\"><rect width=\"128\" height=\"128\" rx=\"32\" fill=\"#AB9FF2\"/><path d=\"M88 56c0-13.3-10.7-24-24-24s-24 10.7-24 24c0 13.3 10.7 24 24 24h24V56z\" fill=\"white\"/><circle cx=\"52\" cy=\"56\" r=\"6\" fill=\"#AB9FF2\"/><circle cx=\"68\" cy=\"56\" r=\"6\" fill=\"#AB9FF2\"/></svg>",
+  "io.rabby": "<svg width=\"28\" height=\"28\" viewBox=\"0 0 128 128\"><rect width=\"128\" height=\"128\" rx=\"32\" fill=\"#8697FF\"/><path d=\"M92 52c0-5-4-9-9-9H45c-5 0-9 4-9 9v14c0 18 15 33 33 33 18 0 33-15 33-33V52z\" fill=\"white\"/><path d=\"M80 58c0-3-2.5-5.5-5.5-5.5H53.5C50.5 52.5 48 55 48 58v4c0 3 2.5 5.5 5.5 5.5h21c3 0 5.5-2.5 5.5-5.5v-4z\" fill=\"#8697FF\"/></svg>",
+  "com.okex.wallet": "<svg width=\"28\" height=\"28\" viewBox=\"0 0 128 128\"><rect width=\"128\" height=\"128\" rx=\"32\" fill=\"#121212\"/><path d=\"M88 58c0-3-2.5-5.5-5.5-5.5H53.5C50.5 52.5 48 55 48 58v4c0 3 2.5 5.5 5.5 5.5h21c3 0 5.5-2.5 5.5-5.5v-4z\" fill=\"white\"/></svg>",
+  "com.trustwallet.app": "<svg width=\"28\" height=\"28\" viewBox=\"0 0 128 128\"><rect width=\"128\" height=\"128\" rx=\"32\" fill=\"#3375BB\"/><path d=\"M64 24L96 40v24c0 23.3-13.4 36.7-32 42.7C45.4 100.7 32 87.3 32 64V40l32-16z\" fill=\"white\" opacity=\"0.95\"/><path d=\"M64 92c-8.8-4.5-14.4-11.3-16.8-22.5l3-7.5 13.8 7.5-13.8-30L64 36v56z\" fill=\"#3375BB\"/></svg>",
+  "com.binance": "<svg width=\"28\" height=\"28\" viewBox=\"0 0 48 48\"><rect width=\"48\" height=\"48\" rx=\"12\" fill=\"#F0B90B\"/><path d=\"M24 10l4.5 4.6-11.3 11.3-4.5-4.6L24 10zm0 16.8l-4.5-4.6-4.5 4.6 9 9 9-9-4.5-4.6-4.5 4.6zm-11.3-2.2l-4.5-4.6 4.5-4.6 4.5 4.6-4.5 4.6zm22.6 0l-4.5-4.6 4.5-4.6 4.5 4.6-4.5 4.6z\" fill=\"white\"/></svg>",
+  "com.coinbase.wallet": "<svg width=\"28\" height=\"28\" viewBox=\"0 0 128 128\"><rect width=\"128\" height=\"128\" rx=\"32\" fill=\"#0052FF\"/><path d=\"M64 36c15.5 0 28 12.5 28 28s-12.5 28-28 28-28-12.5-28-28 12.5-28 28-28zm0 8c-11 0-20 9-20 20s9 20 20 20 20-9 20-20-9-20-20-20zm0 6c7.7 0 14 6.3 14 14s-6.3 14-14 14-14-6.3-14-14 6.3-14 14-14z\" fill=\"white\"/></svg>"
+};
+
+function renderEIP6963Wallets() {
+  if (eip6963Providers.length === 0) return;
+  var html = "";
+  for (var i = 0; i < eip6963Providers.length; i++) {
+    var p = eip6963Providers[i];
+    var name = p.info.name || "Wallet";
+    var rdns = p.info.rdns || "";
+    var icon = WALLET_ICONS[rdns] || "";
+    if (!icon && p.info.icon) {
+      // Use base64 SVG icon from wallet provider
+      icon = '<img src="' + p.info.icon + '" style="width:28px;height:28px;border-radius:8px" alt="' + name + '">';
+    } else if (!icon) {
+      icon = '<span style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;background:rgba(255,255,255,.1);border-radius:8px">💼</span>';
+    }
+    html += '<button type="button" class="wallet-option eip6963-wallet" data-rdns="' + rdns + '" style="display:flex;align-items:center;gap:14px;width:100%;padding:12px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);color:var(--text);font:inherit;font-size:.9rem;cursor:pointer;text-align:left">' +
+      '<span style="width:40px;height:40px;display:flex;align-items:center;justify-content:center;flex-shrink:0">' + icon + '</span>' +
+      '<div style="flex:1"><div style="font-weight:600;font-size:.92rem">' + name + '</div></div>' +
+    '</button>';
+  }
+  el("eip6963WalletList").innerHTML = html;
+
+  // Bind click events to each EIP-6963 wallet
+  el("eip6963WalletList").querySelectorAll(".eip6963-wallet").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      var rdns = btn.dataset.rdns;
+      var found = null;
+      for (var j = 0; j < eip6963Providers.length; j++) {
+        if (eip6963Providers[j].info.rdns === rdns) {
+          found = eip6963Providers[j];
+          break;
+        }
+      }
+      if (!found) {
+        setSellerError("Wallet provider not found. Please try again.");
+        return;
+      }
+      connectEIP6963Wallet(found.provider, found.info.name);
+    });
+  });
+}
+
+function connectEIP6963Wallet(provider, name) {
+  setSellerError("正在连接 " + name + "...");
+  provider.request({ method: "eth_requestAccounts" }).then(function(accounts) {
+    if (!accounts || !accounts.length) {
+      setSellerError(name + " 未返回账号。请先解锁钱包。");
+      return;
+    }
+    setSellerConnected(accounts[0]);
+  }).catch(function(err) {
+    var msg = err && err.message ? err.message : "连接失败";
+    setSellerError(msg);
+  });
+}
+
+// WalletConnect placeholder
+el("wcOptionBtn").addEventListener("click", function() {
+  setSellerError("WalletConnect: 需要 WalletConnect Project ID 才能启用。请前往 https://cloud.walletconnect.com 注册。");
+});
+
+// Manual address
+el("manualOptionBtn").addEventListener("click", function() {
+  el("sellerManualInput").classList.remove("hidden");
+  el("sellerModalError").innerHTML = "";
+});
+el("sellerManualConfirm").addEventListener("click", function() {
+  var addr = el("sellerManualAddrInput").value.trim().toLowerCase();
+  if (!addr || !addr.startsWith("0x") || addr.length < 40) {
+    setSellerError("无效地址。请输入有效的 0x... 地址。");
+    return;
+  }
+  setSellerConnected(addr);
+});
+el("sellerManualAddrInput").addEventListener("keydown", function(e) { if (e.key === "Enter") el("sellerManualConfirm").click(); });
+
+async function registerService() {
+  if (!registerWallet) { regLog("Please connect a seller wallet first.", "bad"); return; }
+  const name = el("regName").value.trim();
+  const description = el("regDesc").value.trim();
+  const price = el("regPrice").value.trim() || "0.00005";
+  let endpoint = el("regEndpoint").value.trim();
+  if (!endpoint) {
+    endpoint = `${window.location.origin}/api/x402`;
+    el("regEndpoint").value = endpoint;
+  }
+  if (!name) { regLog("Service name is required.", "bad"); return; }
+  if (!endpoint.startsWith("http://") && !endpoint.startsWith("https://")) {
+    regLog("Endpoint must start with http:// or https://", "bad");
+    return;
+  }
+
+  const btn = el("registerServiceBtn");
+  btn.disabled = true;
+  btn.textContent = "Registering...";
+  regLog("Submitting on-chain registration via ServiceRegistryV2...", "warn");
+  try {
+    const result = await api("/api/x402/register_v2", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        description,
+        price_seth: price,
+        endpoint_uri: endpoint,
+        seller_address: registerWallet,
+        token_id: "SETH",
+        chain_id: "SETH",
+        protocol: "x402",
+      }),
+      timeout: 240000,
+    });
+    regLog(`✅ Registered service #${result.service_id || "?"} — tx ${short(result.tx_hash || "", 10, 8)}`, "good");
+    await loadX402Services();
+    await loadStatus();
+  } catch (err) {
+    regLog(`❌ Registration failed: ${err.message}`, "bad");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "📝 Register on Chain";
+  }
+}
+el("registerServiceBtn").addEventListener("click", registerService);
+
+// Disconnect seller wallet
+el("registerDisconnectWallet").addEventListener("click", function() {
+  registerWallet = null;
+  el("registerWalletConnected").classList.add("hidden");
+  el("registerWalletConnectArea").classList.remove("hidden");
+});
 loadStatus();
 loadServices();
 loadProofs();

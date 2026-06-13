@@ -12,7 +12,7 @@ import subprocess
 import sys
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +22,12 @@ from pydantic import BaseModel, Field
 from agent_commerce_sandbox.engine import discover_services, pay_for_service, show_proofs
 from agent_commerce_sandbox.procurement_agent import match_and_rank, get_balance, format_price
 from agent_commerce_sandbox.chain_client import ChainClient
+from agent_commerce_sandbox.chain_client_v2 import ChainClientV2
+
+try:
+    from web3 import Web3
+except Exception:
+    Web3 = None
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -127,6 +133,46 @@ async def api_services() -> list[dict[str, Any]]:
         return json_safe(services)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/services/v2")
+async def api_services_v2() -> list[dict[str, Any]]:
+    """List services from the ServiceRegistryV2 contract on Sepolia."""
+    try:
+        chain = await to_thread(ChainClientV2)
+        services = await to_thread(chain.list_services, 0, 100)
+        return json_safe(services)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/services/all")
+async def api_services_all() -> list[dict[str, Any]]:
+    """Return merged V1 and V2 services, each tagged with a 'source' field."""
+    merged: list[dict[str, Any]] = []
+
+    try:
+        v1_chain = await to_thread(ChainClient)
+        v1_services = await to_thread(v1_chain.list_services)
+        for s in v1_services:
+            item = dict(s)
+            item["source"] = "v1"
+            merged.append(item)
+    except Exception as exc:
+        # V1 failure should not block V2 results
+        merged.append({"source": "v1", "error": str(exc)})
+
+    try:
+        v2_chain = await to_thread(ChainClientV2)
+        v2_services = await to_thread(v2_chain.list_services, 0, 100)
+        for s in v2_services:
+            item = dict(s)
+            item["source"] = "v2"
+            merged.append(item)
+    except Exception as exc:
+        merged.append({"source": "v2", "error": str(exc)})
+
+    return json_safe(merged)
 
 
 @app.post("/api/pay")
@@ -236,27 +282,139 @@ async def api_procure(payload: MatchRequest) -> dict[str, Any]:
 class X402BuyRequest(BaseModel):
     service_id: int = 4
     query: str = ""
+    wallet_address: Optional[str] = None
 
 
-@app.post("/api/x402-buy")
-async def api_x402_buy(payload: X402BuyRequest) -> dict[str, Any]:
-    """Full x402 auto-pay flow: request → pact → transfer → deliver."""
+class X402ClaimRequest(BaseModel):
+    """Request body for claiming x402 content with a wallet tx."""
+    service_id: int = Field(..., ge=0)
+    wallet_address: str = Field(..., min_length=40, max_length=46)
+    tx_hash: str = Field(..., min_length=10, max_length=200)
+    query: str = Field(default="", max_length=1000)
+
+
+class X402ConnectRequest(BaseModel):
+    """Connect a visitor wallet with signature proof."""
+    wallet_address: str = Field(..., min_length=40, max_length=46)
+
+
+class X402ChallengeResponse(BaseModel):
+    """Response to a signature challenge."""
+    wallet_address: str = Field(..., min_length=40, max_length=46)
+    signature: str = Field(..., min_length=10, max_length=500)
+
+
+# In-memory pending challenges (wallet_address_lower → nonce)
+_pending_challenges: dict[str, str] = {}
+
+
+def _verify_address(addr: str) -> str:
+    """Validate and normalize an Ethereum address."""
+    addr = addr.strip().lower()
+    if not addr.startswith("0x") or len(addr) < 40 or len(addr) > 42:
+        raise ValueError()
+    hex_part = addr[2:]
+    if len(hex_part) < 38 or len(hex_part) > 40:
+        raise ValueError()
+    int(hex_part, 16)
+    return addr
+
+
+@app.post("/api/x402-challenge")
+async def api_x402_challenge(payload: X402ConnectRequest) -> dict[str, Any]:
+    """Step 1: Generate a challenge for the wallet to sign."""
+    try:
+        addr = _verify_address(payload.wallet_address)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid Ethereum address")
+
+    # Generate unique nonce
+    nonce = os.urandom(16).hex()
+    challenge_msg = f"Agent Commerce Hub - Login\nAddress: {addr}\nNonce: {nonce}"
+    _pending_challenges[addr] = nonce
+
+    return {
+        "status": "challenge",
+        "wallet_address": addr,
+        "challenge": challenge_msg,
+        "instructions": (
+            f"Run this in your terminal:\n"
+            f"  caw sign --message \"{challenge_msg}\"\n"
+            f"Then paste the signature here."
+        ),
+    }
+
+
+@app.post("/api/x402-connect")
+async def api_x402_connect(payload: X402ChallengeResponse) -> dict[str, Any]:
+    """Step 2: Verify signature and connect wallet."""
+    try:
+        addr = _verify_address(payload.wallet_address)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid Ethereum address")
+
+    # Check pending challenge
+    expected_nonce = _pending_challenges.get(addr)
+    if not expected_nonce:
+        raise HTTPException(status_code=400, detail="No pending challenge. Call /api/x402-challenge first.")
+
+    # Clean up challenge (one-time use)
+    del _pending_challenges[addr]
+
+    # Recover signer from signature
+    expected_msg = f"Agent Commerce Hub - Login\nAddress: {addr}\nNonce: {expected_nonce}"
+    try:
+        if Web3 is not None:
+            # Hash the message (EIP-191 personal_sign format)
+            msg_hash = Web3.keccak(text=f"\x19Ethereum Signed Message:\n{len(expected_msg)}{expected_msg}")
+            recovered = Web3.to_checksum_address(Web3.keccak(msg_hash))
+            # Try eth_account for proper ecrecover
+            from eth_account.messages import encode_defunct
+            from eth_account.account import Account
+            msg_obj = encode_defunct(text=expected_msg)
+            recovered_addr = Account.recover_message(msg_obj, signature=payload.signature.strip())
+            recovered_lower = recovered_addr.lower()
+        else:
+            raise RuntimeError("Web3 not available")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Signature verification failed: {exc}")
+
+    if recovered_lower != addr:
+        raise HTTPException(
+            status_code=403,
+            detail="Signature does not match wallet address. Make sure you signed the exact challenge message with your wallet.",
+        )
+
+    return {
+        "status": "connected",
+        "wallet_address": addr,
+        "message": f"Wallet {addr[:10]}... successfully verified and connected.",
+    }
+
+
+@app.post("/api/x402-request")
+async def api_x402_request(payload: X402BuyRequest) -> dict[str, Any]:
+    """Step 1: Request a service — returns 402 payment info.
+
+    Unlike /api/x402-buy, this does NOT create a Pact or transfer.
+    It just returns the payment requirement so the visitor can pay
+    from their own CAW wallet.
+    """
     try:
         from agent_commerce_sandbox.x402_client import X402Client
-        from agent_commerce_sandbox.caw_client import CawClient
-        import json as _json
-
-        caw = CawClient()
-        x402 = X402Client(server_url="http://127.0.0.1:8888")
-        svc = next((s for s in x402.list_services() if s["id"] == payload.service_id), None)
-        if not svc:
-            raise HTTPException(status_code=404, detail=f"x402 service {payload.service_id} not found")
-
-        # Step 1: Get 402 payment info
         import urllib.request
         from urllib.error import HTTPError
+        import json as _json
+
+        x402 = _x402_client_for_marketplace()
+        svc = next((s for s in x402.list_services() if s["id"] == payload.service_id), None)
+        if not svc:
+            raise HTTPException(status_code=404, detail=f"Service {payload.service_id} not found")
+        request_url = x402._resolve_request_url(svc)
+
+        # Fetch 402 payment info from the service's V2 endpointURI
         req = urllib.request.Request(
-            f"{x402.server_url}/request",
+            request_url,
             data=_json.dumps({"service_id": payload.service_id, "query": payload.query}).encode(),
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -269,39 +427,220 @@ async def api_x402_buy(payload: X402BuyRequest) -> dict[str, Any]:
                 raise
             payment = _json.loads(e.read()).get("payment", {})
 
-        # Step 2: Submit pact
-        policies = _json.dumps([{
-            "name": f"x402-pay-{svc['name'].lower().replace(' ','-')[:20]}",
-            "type": "transfer",
-            "rules": {
-                "effect": "allow",
-                "when": {
-                    "chain_in": [payment.get("chain_id", "SETH")],
-                    "token_in": [{"chain_id": payment.get("chain_id", "SETH"), "token_id": payment.get("token_id", "SETH")}],
-                    "destination_address_in": [{"chain_id": payment.get("chain_id", "SETH"), "address": payment.get("address", "")}],
-                },
-                "deny_if": {"amount_usd_gt": "5.00"},
-            },
-        }])
+        return json_safe({
+            "status": "payment_required",
+            "service": svc,
+            "payment": payment,
+            "instructions": (
+                f"Send {payment.get('amount')} {payment.get('token_id')} "
+                f"to {payment.get('address')} on {payment.get('chain_id')} "
+                f"from your wallet, then submit the tx_hash to claim."
+            ),
+        })
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-        pact = caw.submit_pact(
-            intent=f"x402 auto-pay: {payment['amount']} {payment['token_id']} for {svc['name']}",
-            policies_json=policies,
-            completion_conditions=_json.dumps([{"type": "tx_count", "threshold": "1"}]),
-            name=f"x402-{svc['name'].lower().replace(' ','-')[:20]}",
-            execution_plan=f"# Summary\\nAuto-pay for {svc['name']} via x402\\n\\n# Operations\\n- Transfer {payment['amount']} {payment['token_id']} to {payment.get('address','')}\\n\\n# Risk Controls\\n- Single transfer",
+
+@app.post("/api/x402-claim")
+async def api_x402_claim(payload: X402ClaimRequest) -> dict[str, Any]:
+    """Step 2: Verify visitor's payment and deliver content.
+
+    The visitor paid from their own wallet. We verify the tx_hash
+    went to the right address with the right amount, then deliver.
+    """
+    try:
+        import urllib.request
+        from urllib.error import HTTPError
+        import json as _json
+
+        wallet = payload.wallet_address.strip()
+        tx_hash = payload.tx_hash.strip()
+
+        # Check the x402 server with the tx_hash as proof
+        retry_payload = _json.dumps({"service_id": payload.service_id, "query": payload.query}).encode()
+        retry_req = urllib.request.Request(
+            f"http://127.0.0.1:8888/request?tx_hash={tx_hash}",
+            data=retry_payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
         )
-        pact_id = pact.get("pact_id", "")
-        pact_status = pact.get("status", "")
+        resp = urllib.request.urlopen(retry_req, timeout=30)
+        result = _json.loads(resp.read())
 
-        if pact_status in ("pending_approval", "PENDING_APPROVAL"):
-            # Wait for user to approve in CAW App
+        return json_safe({
+            "status": "delivered",
+            "service_id": payload.service_id,
+            "wallet_address": wallet,
+            "tx_hash": tx_hash,
+            "content": result.get("content", ""),
+            "amount_paid": result.get("amount_paid", ""),
+        })
+    except HTTPError as e:
+        body = e.read().decode()
+        raise HTTPException(status_code=e.code, detail=f"Payment verification failed: {body[:300]}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ── Reusable Pact for x402 auto-pay ────────────────────────
+# Store one active Pact and reuse it for compatible x402 purchases.
+_x402_pact_id: Optional[str] = None
+
+
+def _pact_allows_payment(pact: dict, payment: dict) -> bool:
+    """Return True when an active Pact can pay this x402 payment request."""
+    if not isinstance(pact, dict) or pact.get("status") != "active":
+        return False
+
+    expected_chain = str(payment.get("chain_id") or "SETH").lower()
+    expected_token = str(payment.get("token_id") or "SETH").lower()
+    expected_addr = str(payment.get("address") or "").lower()
+    if not expected_addr:
+        return False
+
+    policies = pact.get("spec", {}).get("policies", [])
+    for policy in policies:
+        rules = policy.get("rules", {}) if isinstance(policy, dict) else {}
+        when = rules.get("when", {}) if isinstance(rules, dict) else {}
+        chains = [str(c).lower() for c in when.get("chain_in", [])]
+        tokens = when.get("token_in", [])
+        destinations = when.get("destination_address_in", [])
+
+        chain_ok = not chains or expected_chain in chains
+        token_ok = not tokens or any(
+            str(t.get("chain_id", "")).lower() == expected_chain
+            and str(t.get("token_id", "")).lower() == expected_token
+            for t in tokens if isinstance(t, dict)
+        )
+        dest_ok = any(
+            str(d.get("chain_id", "")).lower() == expected_chain
+            and str(d.get("address", "")).lower() == expected_addr
+            for d in destinations if isinstance(d, dict)
+        )
+        if chain_ok and token_ok and dest_ok:
+            return True
+    return False
+
+
+def _x402_client_for_marketplace():
+    """Use V2 endpointURI by default; local override only when explicit env is set."""
+    from agent_commerce_sandbox.x402_client import X402Client
+    override = os.environ.get("X402_SERVER_OVERRIDE") or os.environ.get("X402_SERVER")
+    return X402Client(server_url=override) if override else X402Client()
+
+
+@app.post("/api/x402-buy")
+async def api_x402_buy(payload: X402BuyRequest) -> dict[str, Any]:
+    """Full x402 auto-pay flow: reuse active pact → transfer → deliver.
+
+    Creates ONE Pact on first purchase (approve once in CAW App).
+    All subsequent purchases reuse the same Pact — zero approval.
+    """
+    global _x402_pact_id
+    try:
+        import urllib.request
+        from urllib.error import HTTPError
+        import json as _json
+        from agent_commerce_sandbox.x402_client import X402Client
+        from agent_commerce_sandbox.caw_client import CawClient
+
+        if payload.wallet_address:
             try:
-                caw.wait_for_pact_active(pact_id, timeout=300)
-            except TimeoutError:
-                return {"status": "pending_approval", "pact_id": pact_id, "error": "Awaiting CAW App approval"}
+                payload_wallet = Web3.to_checksum_address(payload.wallet_address) if Web3 else payload.wallet_address
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid buyer wallet address")
+        else:
+            payload_wallet = None
 
-        # Step 3: Execute transfer
+        caw = CawClient()
+        if payload_wallet:
+            paired_wallet = Web3.to_checksum_address(caw.wallet_address) if Web3 else caw.wallet_address
+            if payload_wallet.lower() != paired_wallet.lower():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Connected buyer wallet does not match this server's paired CAW wallet",
+                )
+
+        x402 = _x402_client_for_marketplace()
+        svc = next((s for s in x402.list_services() if s["id"] == payload.service_id), None)
+        if not svc:
+            raise HTTPException(status_code=404, detail=f"x402 service {payload.service_id} not found")
+        request_url = x402._resolve_request_url(svc)
+
+        # Step 1: Get 402 payment info from the service's V2 endpointURI
+        req = urllib.request.Request(
+            request_url,
+            data=_json.dumps({"service_id": payload.service_id, "query": payload.query}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=15)
+            raise RuntimeError("Expected 402 but got 200")
+        except HTTPError as e:
+            if e.code != 402:
+                raise
+            payment = _json.loads(e.read()).get("payment", {})
+
+        # Step 2: Reuse or create Pact
+        pact_id = None
+        needs_approval = False
+
+        # Check if stored Pact is still active
+        if _x402_pact_id:
+            try:
+                pact_info = caw.get_pact(_x402_pact_id)
+                if _pact_allows_payment(pact_info, payment):
+                    pact_id = _x402_pact_id
+                else:
+                    # Stale or incompatible with this service's destination/token.
+                    _x402_pact_id = None
+            except Exception:
+                _x402_pact_id = None
+
+        # No active pact — create a reusable one
+        if not pact_id:
+            policies = _json.dumps([{
+                "name": "x402-auto-pay",
+                "type": "transfer",
+                "rules": {
+                    "effect": "allow",
+                    "when": {
+                        "chain_in": ["SETH"],
+                        "token_in": [{"chain_id": "SETH", "token_id": "SETH"}],
+                        "destination_address_in": [
+                            {"chain_id": "SETH", "address": payment.get("address", "")}
+                        ],
+                    },
+                    "deny_if": {"amount_usd_gt": "10.00"},
+                },
+            }])
+
+            pact = caw.submit_pact(
+                intent="x402 auto-pay — reusable pact for Agent Commerce Hub purchases",
+                policies_json=policies,
+                completion_conditions=_json.dumps([{"type": "tx_count", "threshold": "100"}]),
+                name="x402-auto-pay",
+                execution_plan="# Summary\\nReusable Pact for all x402 Auto-Pay purchases\\n\\n# Operations\\n- Transfer SETH for purchased services\\n\\n# Risk Controls\\n- Max $10 per transaction\\n- SETH chain only",
+            )
+            pact_id = pact.get("pact_id", "")
+            pact_status = pact.get("status", "")
+
+            if pact_status in ("pending_approval", "PENDING_APPROVAL"):
+                needs_approval = True
+                # Wait for user to approve in CAW App (first time only)
+                try:
+                    caw.wait_for_pact_active(pact_id, timeout=300)
+                except TimeoutError:
+                    return {"status": "pending_approval", "pact_id": pact_id,
+                            "error": "Awaiting CAW App approval for Pact — after approval, all future buys auto-execute"}
+
+            # Store for future reuse
+            _x402_pact_id = pact_id
+
+        # Step 3: Execute transfer under the (new or reused) Pact
         tx_result = caw.execute_transfer(
             pact_id=pact_id,
             dst_address=payment.get("address", ""),
@@ -314,12 +653,14 @@ async def api_x402_buy(payload: X402BuyRequest) -> dict[str, Any]:
 
         # Wait for completion
         tx_complete = caw.wait_for_transaction_complete(tx_id, timeout=180)
-        request_id = tx_result.get("request_id", tx_id)
+        tx_hash = tx_complete.get("transaction_hash", "")
+        if not tx_hash or not str(tx_hash).startswith("0x"):
+            raise RuntimeError("CAW transfer completed without an on-chain transaction_hash; cannot prove x402 payment")
 
-        # Step 4: Retry x402 with payment proof
+        # Step 4: Retry x402 with on-chain payment proof
         retry_payload = _json.dumps({"service_id": payload.service_id, "query": payload.query}).encode()
         retry_req = urllib.request.Request(
-            f"{x402.server_url}/request?tx_hash={request_id}",
+            f"{request_url}?tx_hash={tx_hash}",
             data=retry_payload,
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -331,7 +672,8 @@ async def api_x402_buy(payload: X402BuyRequest) -> dict[str, Any]:
             "status": "completed",
             "service": svc["name"],
             "amount_paid": payment.get("amount", ""),
-            "tx_hash": tx_complete.get("transaction_hash", ""),
+            "tx_hash": tx_hash,
+            "reused_pact": not needs_approval and _x402_pact_id is not None,
             "content": result.get("content", ""),
         })
 
@@ -348,6 +690,8 @@ async def api_status() -> dict[str, Any]:
         "contract_address": None,
         "service_count": 0,
         "proof_count": 0,
+        "v2_contract_address": None,
+        "v2_service_count": 0,
     }
 
     try:
@@ -359,6 +703,15 @@ async def api_status() -> dict[str, Any]:
         status["proof_count"] = await to_thread(chain.get_proof_count)
     except Exception as exc:
         status["chain_error"] = str(exc)
+
+    try:
+        chain_v2 = await to_thread(ChainClientV2)
+        if chain_v2 is None:
+            raise RuntimeError("ChainClientV2() returned None")
+        status["v2_contract_address"] = chain_v2.contract_addr
+        status["v2_service_count"] = await to_thread(chain_v2.get_service_count)
+    except Exception as exc:
+        status["v2_chain_error"] = str(exc)
 
     try:
         caw_status = await to_thread(run_caw_json, "status", timeout=30)
