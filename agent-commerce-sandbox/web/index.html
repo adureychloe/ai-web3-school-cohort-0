@@ -127,7 +127,7 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
 </style>
 <main class="shell">
 <header style="position:sticky;position:-webkit-sticky">
-  <div class="brand"><div class="logo">ACH</div><div><h1>Agent Commerce Hub</h1><div class="subtitle">On-chain service discovery × CAW payments × delivery proofs</div></div></div>
+  <div class="brand"><div class="logo">ACH</div><div><h1>Agent Commerce Hub</h1><div class="subtitle">V2/x402 service discovery × CAW payments × delivery proofs</div></div></div>
   <div id="statusbar" class="statusbar"><span class="chip warn"><span class="loader"></span>checking status</span></div>
 </header>
 <nav class="tabs" aria-label="Sections">
@@ -141,17 +141,14 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
     <button class="search-btn" id="searchBtn" type="button">Find Service</button>
     <button class="search-btn" id="procureBtn" type="button" style="background:linear-gradient(135deg,var(--yellow),var(--green))">Find & Pay</button>
   </div>
-  <div class="registry-toggle" role="tablist" aria-label="Registry version">
-    <span class="hint" style="margin-right:4px">Registry:</span>
-    <button class="reg-btn active" id="regV1Btn" type="button">V1 <span class="reg-badge v1" style="margin-left:4px">V1</span></button>
-    <button class="reg-btn" id="regV2Btn" type="button">V2 <span class="reg-badge v2" style="margin-left:4px">V2</span></button>
+  <div class="registry-toggle" aria-label="Registry">
+    <span class="hint">Registry: <strong>ServiceRegistryV2 / x402</strong></span>
   </div>
   <div class="grid"><div>
-    <div id="serviceCards" class="cards"><div class="empty"><span class="loader"></span>Discovering services on Sepolia...</div></div>
-    <div id="serviceCardsV2" class="cards hidden"><div class="empty"><span class="loader"></span>Loading V2 services...</div></div>
+    <div id="serviceCards" class="cards"><div class="empty"><span class="loader"></span>Loading V2/x402 services on Sepolia...</div></div>
   </div>
-<aside class="panel" id="paymentPanel"><h2>Select a service</h2><p>Choose a card or use the search bar above to auto-match a service to your needs. The Pay button submits a CAW pact, waits for approval, sends the transfer, and records delivery proof.</p>
-<div id="paymentBody" class="hidden"><p id="selectedMeta"></p><p id="balanceInfo" class="bal-chip" style="margin:0 0 12px"></p><label for="intent">Intent</label><textarea id="intent" placeholder="Describe what you want the provider agent to do..."></textarea><div class="actions"><button id="payButton" class="primary" type="button">Pay with CAW</button><span class="hint">Keep this tab open while CAW approval is pending.</span></div></div>
+<aside class="panel" id="paymentPanel"><h2>Select a V2/x402 service</h2><p>Choose a V2/x402 card or use the search bar above to auto-match a service. The Pay button buys through HTTP 402 + CAW auto-pay.</p>
+<div id="paymentBody" class="hidden"><p id="selectedMeta"></p><p id="balanceInfo" class="bal-chip" style="margin:0 0 12px"></p><label for="intent">Request</label><textarea id="intent" placeholder="Describe what you want the provider agent to do..."></textarea><div class="actions"><button id="payButton" class="primary" type="button">Buy via x402</button><span class="hint">First x402 buy may require CAW approval; later buys can auto-execute.</span></div></div>
 <div class="log" id="log" aria-live="polite"><div class="log-line"><span class="time">ready</span><span class="msg">Terminal log initialized.</span></div></div>
 <div id="resultPanel" class="hidden" style="margin-top:14px;border:1px solid rgba(91,255,199,.2);border-radius:16px;padding:16px;background:rgba(12,18,28,.95)"><div class="result-panel"><div class="result-icon" id="resultIcon">✅</div><div class="result-title" id="resultTitle">Payment Complete</div><div class="result-details" id="resultDetails"></div><div class="actions" style="justify-content:center"><button class="ghost" id="resetResultBtn" type="button">New Procurement</button></div></div></div></aside></div></section>
 <section id="proofsView" class="hidden"><div class="panel"><div class="toolbar"><div><h2>Delivery proofs</h2><p>Records returned by ServiceRegistry on Sepolia.</p></div><button class="ghost" id="refreshProofs" type="button">Refresh proofs</button></div><div id="proofsTable" class="empty"><span class="loader"></span>Loading proofs...</div></div></section>
@@ -315,8 +312,8 @@ function showResult(result, serviceName) {
     rows.push(`<div class="result-row"><span class="label">Tx Hash</span><span class="value mono"><a class="explorer-link" href="https://sepolia.etherscan.io/tx/${encodeURIComponent(txHash)}" target="_blank" rel="noopener">${escapeHtml(txShort)}</a></span></div>`);
   }
 
-  const pactId = result.pact && (result.pact.pact_id || result.pact.id || "");
-  if (pactId) rows.push(`<div class="result-row"><span class="label">Pact ID</span><span class="value mono">${escapeHtml(pactId.slice(0, 36))}</span></div>`);
+  const pactId = (result.pact && (result.pact.pact_id || result.pact.id || "")) || result.pact_id || "";
+  if (pactId) rows.push(`<div class="result-row"><span class="label">Pact ID</span><span class="value mono">${escapeHtml(String(pactId).slice(0, 36))}</span></div>`);
 
   if (result.proof && result.proof.tx_hash) {
     const pTx = result.proof.tx_hash;
@@ -328,7 +325,11 @@ function showResult(result, serviceName) {
     rows.push(`<div class="result-row"><span class="label">Match Score</span><span class="value good">${result.matched_service.match_score}</span></div>`);
   }
 
-  details.innerHTML = rows.join("");
+  let detailsHtml = rows.join("");
+  if (result.content) {
+    detailsHtml += `<div style="margin-top:14px">${renderContent(String(result.content))}</div>`;
+  }
+  details.innerHTML = detailsHtml;
 
   // Hide payment body, show result panel
   el("paymentBody").classList.add("hidden");
@@ -393,16 +394,16 @@ async function loadStatus() {
 
 function renderServices() {
   const host = el("serviceCards");
-  if (!state.services.length) { host.innerHTML = `<div class="empty">No active services found on-chain.</div>`; return; }
-  host.innerHTML = state.services.slice(0, 3).map((svc) => {
+  if (!state.services.length) { host.innerHTML = `<div class="empty">No active V2/x402 services found on-chain.</div>`; return; }
+  host.innerHTML = state.services.slice(0, 6).map((svc) => {
     const selected = state.selected && Number(state.selected.id) === Number(svc.id) ? " selected" : "";
     const price = `${formatEth(svc.priceWei)} ${svc.tokenId || "SETH"}`;
     return `<article class="card${selected}" tabindex="0" role="button" data-service-id="${escapeHtml(svc.id)}">
-      <div class="card-top"><span>service #${escapeHtml(svc.id)}</span><span>${escapeHtml(svc.chainId || "SETH")}</span></div>
+      <div class="card-top"><span>V2/x402 #${escapeHtml(svc.id)}</span><span>${escapeHtml(svc.protocol || "x402")}</span></div>
       <h3 class="service-name">${escapeHtml(svc.name)}</h3>
       <div class="desc">${escapeHtml(svc.description)}</div>
       <div class="price">${escapeHtml(price)}</div>
-      <div class="addr">provider ${escapeHtml(short(svc.provider || svc.paymentAddress || ""))}</div>
+      <div class="addr">endpoint ${escapeHtml(short(svc.endpointURI || "", 24, 10))}</div>
     </article>`;
   }).join("");
   host.querySelectorAll(".card").forEach((card) => {
@@ -419,7 +420,7 @@ function selectService(id) {
   el("paymentPanel").querySelector("h2").textContent = svc.name;
   const bal = state.balance && state.balance.amount && state.balance.amount !== "unknown" ? `Balance: ${parseFloat(state.balance.amount).toFixed(6)} SETH` : "";
   el("balanceInfo").textContent = bal;
-  el("selectedMeta").innerHTML = `${escapeHtml(svc.description)}<br><strong style="color:var(--green)">${escapeHtml(formatEth(svc.priceWei))} ${escapeHtml(svc.tokenId || "SETH")}</strong><br><span class="mono">pay to ${escapeHtml(svc.paymentAddress || "")}</span>`;
+  el("selectedMeta").innerHTML = `${escapeHtml(svc.description)}<br><strong style="color:var(--green)">${escapeHtml(formatEth(svc.priceWei))} ${escapeHtml(svc.tokenId || "SETH")}</strong><br><span class="mono">x402 endpoint ${escapeHtml(svc.endpointURI || "")}</span>`;
   el("intent").value = `Purchase ${svc.name} for: `;
   el("paymentBody").classList.remove("hidden");
   resetLog();
@@ -427,14 +428,14 @@ function selectService(id) {
 }
 async function loadServices() {
   const host = el("serviceCards");
-  host.innerHTML = `<div class="empty"><span class="loader"></span>Discovering services on Sepolia...</div>`;
+  host.innerHTML = `<div class="empty"><span class="loader"></span>Loading V2/x402 services on Sepolia...</div>`;
   try {
     state.services = await api("/api/services");
     renderServices();
     if (state.services.length && !state.selected) selectService(state.services[0].id);
   } catch (err) {
     host.innerHTML = `<div class="empty">Service discovery failed: ${escapeHtml(err.message)}</div>`;
-    log(`Service discovery failed: ${err.message}`, "bad");
+    log(`V2/x402 service discovery failed: ${err.message}`, "bad");
   }
 }
 async function doSearch() {
@@ -500,7 +501,7 @@ async function doProcure() {
   log(`🚀 One-click procurement: ${query}`, "good");
   log("Matching best service...", "warn");
   try {
-    const result = await api("/api/procure", { method: "POST", body: JSON.stringify({ request: query }) });
+    const result = await api("/api/procure", { method: "POST", body: JSON.stringify({ request: query }), timeout: 360000 });
 
     const ms = result.matched_service;
     if (ms) {
@@ -563,7 +564,9 @@ async function loadProofs() {
 }
 
 function extractPactId(result) {
-  const pact = result && result.pact ? result.pact : null;
+  if (!result) return "";
+  if (result.pact_id) return result.pact_id;
+  const pact = result.pact ? result.pact : null;
   return pact && (pact.pact_id || pact.id || pact.uuid) ? (pact.pact_id || pact.id || pact.uuid) : "";
 }
 function startWaitingHeartbeat() {
@@ -597,11 +600,11 @@ async function paySelected() {
   state.paying = true;
   el("payButton").disabled = true;
   resetLog();
-  log("Pact submitted: creating CAW authorization request...");
-  log("Waiting for approval: polling every 3s while the server advances the flow", "warn");
+  log("x402 request submitted: preparing CAW auto-pay...");
+  log("First purchase may wait for CAW approval; approved pacts can be reused.", "warn");
   startWaitingHeartbeat();
   try {
-    const result = await api("/api/pay", { method: "POST", body: JSON.stringify({ service_id: Number(state.selected.id), intent: el("intent").value.trim() }) });
+    const result = await api("/api/x402-buy", { method: "POST", body: JSON.stringify({ service_id: Number(state.selected.id), query: el("intent").value.trim() }), timeout: 360000 });
     stopTimers();
     const pactId = extractPactId(result);
     if (pactId) {
@@ -610,8 +613,10 @@ async function paySelected() {
     }
     if (result.error) log(result.error, result.status === "failed" ? "bad" : "warn");
     if (result.transfer) log(`Transfer sent: ${result.tx_hash || result.transfer.transaction_hash || result.transfer.id || "submitted"}`, "good");
+    if (result.tx_hash && !result.transfer) log(`Transfer sent: ${result.tx_hash}`, "good");
     if (result.proof) log(`Delivery recorded: proof tx ${result.proof.tx_hash || "recorded"}`, "good");
-    log(`Payment flow status: ${result.status}`, result.status === "completed" ? "good" : "warn");
+    if (result.content) log(`x402 content delivered.`, "good");
+    log(`x402 payment flow status: ${result.status}`, result.status === "completed" ? "good" : "warn");
     showResult(result, state.selected ? state.selected.name : "");
     await loadStatus();
     await loadProofs();

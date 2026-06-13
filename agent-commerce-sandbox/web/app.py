@@ -14,7 +14,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -126,45 +126,77 @@ async def index() -> FileResponse:
     return FileResponse(INDEX_PATH)
 
 
+async def _list_v2_services() -> list[dict[str, Any]]:
+    """List active user-facing services from the V2/x402 registry."""
+    from agent_commerce_sandbox.x402_client import _normalize_public_endpoint
+
+    chain = await to_thread(ChainClientV2)
+    services = await to_thread(chain.list_services, 0, 100)
+
+    visible: list[dict[str, Any]] = []
+    fields = (
+        "id", "name", "description", "paymentAddress", "priceWei",
+        "tokenId", "chainId", "active", "provider", "endpointURI", "protocol",
+    )
+    for svc in services:
+        if not svc.get("active", False):
+            continue
+        protocol = svc.get("protocol") or "x402"
+        if str(protocol).lower() != "x402":
+            continue
+        item = {field: svc.get(field) for field in fields}
+        item["protocol"] = protocol
+        item["endpointURI"] = _normalize_public_endpoint(
+            str(svc.get("endpointURI") or ""),
+            int(svc.get("id") or 0),
+        )
+        visible.append(item)
+
+    return json_safe(visible)
+
+
+async def _list_legacy_v1_services() -> list[dict[str, Any]]:
+    """List services from the legacy V1 registry for explicit legacy callers."""
+    services = await to_thread(discover_services)
+    return json_safe(services)
+
+
 @app.get("/api/services")
 async def api_services() -> list[dict[str, Any]]:
+    """Default user-facing service discovery: ServiceRegistryV2/x402 only."""
     try:
-        services = await to_thread(discover_services)
-        return json_safe(services)
+        return await _list_v2_services()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/services/v2")
 async def api_services_v2() -> list[dict[str, Any]]:
-    """List services from the ServiceRegistryV2 contract on Sepolia."""
+    """Explicit V2 alias for the default ServiceRegistryV2/x402 registry."""
     try:
-        chain = await to_thread(ChainClientV2)
-        services = await to_thread(chain.list_services, 0, 100)
-        return json_safe(services)
+        return await _list_v2_services()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/legacy/services")
+async def api_legacy_services() -> list[dict[str, Any]]:
+    """Legacy V1 service discovery (ServiceRegistry + CAW pact/payment/proof)."""
+    try:
+        return await _list_legacy_v1_services()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/services/all")
-async def api_services_all() -> list[dict[str, Any]]:
-    """Return merged V1 and V2 services, each tagged with a 'source' field."""
+async def api_services_all(
+    include_legacy: bool = Query(False, description="Include legacy V1 ServiceRegistry results"),
+) -> list[dict[str, Any]]:
+    """Return V2/x402 services by default; include V1 only when requested."""
     merged: list[dict[str, Any]] = []
 
     try:
-        v1_chain = await to_thread(ChainClient)
-        v1_services = await to_thread(v1_chain.list_services)
-        for s in v1_services:
-            item = dict(s)
-            item["source"] = "v1"
-            merged.append(item)
-    except Exception as exc:
-        # V1 failure should not block V2 results
-        merged.append({"source": "v1", "error": str(exc)})
-
-    try:
-        v2_chain = await to_thread(ChainClientV2)
-        v2_services = await to_thread(v2_chain.list_services, 0, 100)
+        v2_services = await _list_v2_services()
         for s in v2_services:
             item = dict(s)
             item["source"] = "v2"
@@ -172,17 +204,38 @@ async def api_services_all() -> list[dict[str, Any]]:
     except Exception as exc:
         merged.append({"source": "v2", "error": str(exc)})
 
+    if include_legacy:
+        try:
+            v1_chain = await to_thread(ChainClient)
+            v1_services = await to_thread(v1_chain.list_services)
+            for s in v1_services:
+                item = dict(s)
+                item["source"] = "legacy_v1"
+                merged.append(item)
+        except Exception as exc:
+            # V1 is legacy and opt-in; do not block V2 results.
+            merged.append({"source": "legacy_v1", "error": str(exc)})
+
     return json_safe(merged)
 
 
-@app.post("/api/pay")
-async def api_pay(payload: PayRequest) -> dict[str, Any]:
+@app.post("/api/legacy/pay")
+async def api_legacy_pay(payload: PayRequest) -> dict[str, Any]:
+    """Legacy V1 payment flow using CAW pact/payment/proof helpers."""
     intent = payload.intent.strip() or f"Purchase service #{payload.service_id}"
     try:
         result = await to_thread(pay_for_service, payload.service_id, intent)
         return json_safe(result)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/pay")
+async def api_pay(payload: PayRequest) -> dict[str, Any]:
+    """Compatibility wrapper for the default V2/x402 payment flow."""
+    return await api_x402_buy(
+        X402BuyRequest(service_id=payload.service_id, query=payload.intent)
+    )
 
 
 @app.get("/api/pact/{pact_id}/status")
@@ -202,11 +255,31 @@ async def api_pact_status(pact_id: str) -> dict[str, Any]:
 
 @app.get("/api/proofs")
 async def api_proofs() -> list[dict[str, Any]]:
+    """Default delivery proofs from ServiceRegistryV2/x402."""
     try:
-        proofs = await to_thread(show_proofs)
+        chain = await to_thread(ChainClientV2)
+        count = await to_thread(chain.get_proof_count)
+        proofs = await to_thread(chain.get_proofs, 0, count) if count else []
         return json_safe(proofs)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/legacy/proofs")
+async def api_legacy_proofs() -> list[dict[str, Any]]:
+    """Legacy V1 delivery proofs from ServiceRegistry.
+
+    Some historical V1 proof rows can contain malformed bytes; keep the explicit
+    legacy endpoint non-blocking by returning a tagged error row instead of
+    breaking the V2/x402 UI.
+    """
+    try:
+        chain = await to_thread(ChainClient)
+        count = await to_thread(chain.get_proof_count)
+        proofs = await to_thread(chain.get_proofs, 0, count) if count else []
+        return json_safe(proofs)
+    except Exception as exc:
+        return json_safe([{"source": "legacy_v1", "error": str(exc)}])
 
 
 class MatchResponseItem(BaseModel):
@@ -221,8 +294,9 @@ class MatchResponseItem(BaseModel):
     tokenId: str
 
 
-@app.post("/api/procure/match")
-async def api_procure_match(payload: MatchRequest) -> dict[str, Any]:
+@app.post("/api/legacy/procure/match")
+async def api_legacy_procure_match(payload: MatchRequest) -> dict[str, Any]:
+    """Legacy V1 procurement matching against ServiceRegistry V1 services."""
     try:
         chain = await to_thread(ChainClient)
         services = await to_thread(chain.list_services)
@@ -250,9 +324,38 @@ async def api_procure_match(payload: MatchRequest) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@app.post("/api/procure")
-async def api_procure(payload: MatchRequest) -> dict[str, Any]:
-    """Full procurement: match best service, create pact, execute transfer, record proof."""
+@app.post("/api/procure/match")
+async def api_procure_match(payload: MatchRequest) -> dict[str, Any]:
+    """Default procurement matching against V2/x402 services only."""
+    try:
+        services = await _list_v2_services()
+        active = [s for s in services if s.get("active", True)]
+        ranked, match_source = match_and_rank(payload.request, active)
+
+        matches = []
+        for score, s in ranked[:5]:
+            eth_s, usd_s = format_price(s["priceWei"])
+            matches.append(MatchResponseItem(
+                id=s["id"],
+                name=s["name"],
+                description=s["description"],
+                price_eth=eth_s,
+                price_usd=usd_s,
+                match_score=score,
+                paymentAddress=s["paymentAddress"],
+                chainId=s["chainId"],
+                tokenId=s["tokenId"],
+            ))
+
+        balance = await to_thread(get_balance)
+        return {"matches": [m.model_dump() for m in matches], "balance": balance, "match_source": match_source}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/legacy/procure")
+async def api_legacy_procure(payload: MatchRequest) -> dict[str, Any]:
+    """Legacy V1 procurement: match service, create CAW pact, pay, record proof."""
     try:
         chain = await to_thread(ChainClient)
         services = await to_thread(chain.list_services)
@@ -264,6 +367,33 @@ async def api_procure(payload: MatchRequest) -> dict[str, Any]:
         best = ranked[0][1]
 
         result = await to_thread(pay_for_service, best["id"], payload.request)
+        return json_safe({
+            **result,
+            "matched_service": {
+                "id": best["id"],
+                "name": best["name"],
+                "match_score": ranked[0][0],
+            },
+            "match_source": match_source,
+        })
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/procure")
+async def api_procure(payload: MatchRequest) -> dict[str, Any]:
+    """Default procurement uses V2/x402 auto-pay instead of legacy V1."""
+    try:
+        services = await _list_v2_services()
+        active = [s for s in services if s.get("active", True)]
+        if not active:
+            raise HTTPException(status_code=404, detail="No active x402 services available")
+
+        ranked, match_source = match_and_rank(payload.request, active)
+        best = ranked[0][1]
+        result = await api_x402_buy(X402BuyRequest(service_id=best["id"], query=payload.request))
         return json_safe({
             **result,
             "matched_service": {
@@ -458,10 +588,16 @@ async def api_x402_claim(payload: X402ClaimRequest) -> dict[str, Any]:
         wallet = payload.wallet_address.strip()
         tx_hash = payload.tx_hash.strip()
 
-        # Check the x402 server with the tx_hash as proof
+        # Check the selected service's V2/x402 endpointURI with the tx_hash as proof.
+        x402 = _x402_client_for_marketplace()
+        svc = next((s for s in x402.list_services() if s["id"] == payload.service_id), None)
+        if not svc:
+            raise HTTPException(status_code=404, detail=f"Service {payload.service_id} not found")
+        request_url = x402._resolve_request_url(svc)
+
         retry_payload = _json.dumps({"service_id": payload.service_id, "query": payload.query}).encode()
         retry_req = urllib.request.Request(
-            f"http://127.0.0.1:8888/request?tx_hash={tx_hash}",
+            f"{request_url}?tx_hash={tx_hash}",
             data=retry_payload,
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -489,9 +625,17 @@ async def api_x402_claim(payload: X402ClaimRequest) -> dict[str, Any]:
 _x402_pact_id: Optional[str] = None
 
 
-def _pact_allows_payment(pact: dict, payment: dict) -> bool:
-    """Return True when an active Pact can pay this x402 payment request."""
-    if not isinstance(pact, dict) or pact.get("status") != "active":
+def _pact_result(pact: dict) -> dict:
+    """Normalize CAW pact responses that may be wrapped in a result object."""
+    if isinstance(pact, dict) and isinstance(pact.get("result"), dict):
+        return pact["result"]
+    return pact if isinstance(pact, dict) else {}
+
+
+def _pact_is_compatible(pact: dict, payment: dict) -> bool:
+    """Return True when a Pact policy can pay this x402 payment request."""
+    pact = _pact_result(pact)
+    if not isinstance(pact, dict):
         return False
 
     expected_chain = str(payment.get("chain_id") or "SETH").lower()
@@ -524,6 +668,22 @@ def _pact_allows_payment(pact: dict, payment: dict) -> bool:
     return False
 
 
+def _pact_allows_payment(pact: dict, payment: dict) -> bool:
+    """Return True when an active Pact can pay this x402 payment request."""
+    pact = _pact_result(pact)
+    return str(pact.get("status", "")).lower() == "active" and _pact_is_compatible(pact, payment)
+
+
+def _pending_approval_response(pact_id: str, pact_status: str, error: str) -> dict[str, Any]:
+    """Return the browser's canonical pending-approval response shape."""
+    return {
+        "status": "pending_approval",
+        "pact": {"pact_id": pact_id, "status": pact_status},
+        "pact_id": pact_id,
+        "error": error,
+    }
+
+
 def _x402_client_for_marketplace():
     """Use V2 endpointURI by default; local override only when explicit env is set."""
     from agent_commerce_sandbox.x402_client import X402Client
@@ -531,8 +691,7 @@ def _x402_client_for_marketplace():
     return X402Client(server_url=override) if override else X402Client()
 
 
-@app.post("/api/x402-buy")
-async def api_x402_buy(payload: X402BuyRequest) -> dict[str, Any]:
+def _api_x402_buy_blocking(payload: X402BuyRequest) -> dict[str, Any]:
     """Full x402 auto-pay flow: reuse active pact → transfer → deliver.
 
     Creates ONE Pact on first purchase (approve once in CAW App).
@@ -591,7 +750,14 @@ async def api_x402_buy(payload: X402BuyRequest) -> dict[str, Any]:
         # Check if stored Pact is still active
         if _x402_pact_id:
             try:
-                pact_info = caw.get_pact(_x402_pact_id)
+                pact_info = _pact_result(caw.get_pact(_x402_pact_id))
+                pact_status = str(pact_info.get("status", ""))
+                if pact_status.lower() == "pending_approval" and _pact_is_compatible(pact_info, payment):
+                    return _pending_approval_response(
+                        _x402_pact_id,
+                        pact_status,
+                        "Awaiting CAW App approval for Pact — after approval, retry this buy to auto-execute",
+                    )
                 if _pact_allows_payment(pact_info, payment):
                     pact_id = _x402_pact_id
                 else:
@@ -627,18 +793,27 @@ async def api_x402_buy(payload: X402BuyRequest) -> dict[str, Any]:
             )
             pact_id = pact.get("pact_id", "")
             pact_status = pact.get("status", "")
+            if pact_id:
+                _x402_pact_id = pact_id
 
-            if pact_status in ("pending_approval", "PENDING_APPROVAL"):
+            if str(pact_status).lower() == "pending_approval":
                 needs_approval = True
-                # Wait for user to approve in CAW App (first time only)
+                # Wait for user to approve in CAW App (first time only). Keep
+                # _x402_pact_id available while waiting so concurrent/retry
+                # requests reuse the pending compatible Pact instead of creating
+                # another one.
                 try:
                     caw.wait_for_pact_active(pact_id, timeout=300)
                 except TimeoutError:
-                    return {"status": "pending_approval", "pact_id": pact_id,
-                            "error": "Awaiting CAW App approval for Pact — after approval, all future buys auto-execute"}
+                    return _pending_approval_response(
+                        pact_id,
+                        pact_status,
+                        "Awaiting CAW App approval for Pact — after approval, all future buys auto-execute",
+                    )
 
             # Store for future reuse
-            _x402_pact_id = pact_id
+            if pact_id:
+                _x402_pact_id = pact_id
 
         # Step 3: Execute transfer under the (new or reused) Pact
         tx_result = caw.execute_transfer(
@@ -683,35 +858,53 @@ async def api_x402_buy(payload: X402BuyRequest) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.post("/api/x402-buy")
+async def api_x402_buy(payload: X402BuyRequest) -> dict[str, Any]:
+    """Full x402 auto-pay flow without blocking the FastAPI event loop."""
+    return await asyncio.to_thread(_api_x402_buy_blocking, payload)
+
+
 @app.get("/api/status")
 async def api_status() -> dict[str, Any]:
     status: dict[str, Any] = {
         "wallet_healthy": False,
+        # Default fields describe the default V2/x402 registry.
         "contract_address": None,
         "service_count": 0,
         "proof_count": 0,
+        # Explicit V2 aliases kept for compatibility.
         "v2_contract_address": None,
         "v2_service_count": 0,
+        # Legacy V1 fields are opt-in/explicit.
+        "legacy_contract_address": None,
+        "legacy_service_count": 0,
+        "legacy_proof_count": 0,
     }
-
-    try:
-        chain = await to_thread(ChainClient)
-        if chain is None:
-            raise RuntimeError("ChainClient() returned None")
-        status["contract_address"] = chain.contract_addr
-        status["service_count"] = await to_thread(chain.get_service_count)
-        status["proof_count"] = await to_thread(chain.get_proof_count)
-    except Exception as exc:
-        status["chain_error"] = str(exc)
 
     try:
         chain_v2 = await to_thread(ChainClientV2)
         if chain_v2 is None:
             raise RuntimeError("ChainClientV2() returned None")
+        v2_service_count = await to_thread(chain_v2.get_service_count)
+        v2_proof_count = await to_thread(chain_v2.get_proof_count)
+        status["contract_address"] = chain_v2.contract_addr
+        status["service_count"] = v2_service_count
+        status["proof_count"] = v2_proof_count
         status["v2_contract_address"] = chain_v2.contract_addr
-        status["v2_service_count"] = await to_thread(chain_v2.get_service_count)
+        status["v2_service_count"] = v2_service_count
+        status["v2_proof_count"] = v2_proof_count
     except Exception as exc:
         status["v2_chain_error"] = str(exc)
+
+    try:
+        chain = await to_thread(ChainClient)
+        if chain is None:
+            raise RuntimeError("ChainClient() returned None")
+        status["legacy_contract_address"] = chain.contract_addr
+        status["legacy_service_count"] = await to_thread(chain.get_service_count)
+        status["legacy_proof_count"] = await to_thread(chain.get_proof_count)
+    except Exception as exc:
+        status["legacy_chain_error"] = str(exc)
 
     try:
         caw_status = await to_thread(run_caw_json, "status", timeout=30)
