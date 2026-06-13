@@ -203,7 +203,7 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
             </div>
             <div style="flex:1">
               <label for="regEndpoint">Endpoint URI <span class="hint">(auto-filled if empty)</span></label>
-              <input id="regEndpoint" type="text" placeholder="http://localhost:8888" style="width:100%;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:var(--text);padding:10px 12px;font:inherit;outline:none;font-size:.82rem;box-sizing:border-box">
+              <input id="regEndpoint" type="text" placeholder="/api/x402" style="width:100%;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:var(--text);padding:10px 12px;font:inherit;outline:none;font-size:.82rem;box-sizing:border-box">
             </div>
           </div>
           <div class="actions" style="margin-top:14px">
@@ -252,6 +252,10 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
 
 const state = { services: [], proofs: [], selected: null, paying: false, waitTimer: null, pactPollTimer: null, lastPactStatus: "", balance: null };
 const el = (id) => document.getElementById(id);
+const regEndpointInput = el("regEndpoint");
+if (regEndpointInput && window.location && window.location.origin) {
+  regEndpointInput.placeholder = `${window.location.origin}/api/x402`;
+}
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

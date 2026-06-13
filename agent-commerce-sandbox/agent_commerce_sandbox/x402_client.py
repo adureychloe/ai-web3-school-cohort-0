@@ -38,6 +38,62 @@ except Exception:  # pragma: no cover
 # ── Constants ───────────────────────────────────────────────────
 
 DEFAULT_X402_SERVER = "http://127.0.0.1:8888"
+STALE_DEMO_SERVICE_ID = 1
+LAST_RESORT_DEMO_PUBLIC_X402_SERVER = "https://gradually-clicker-tacking.ngrok-free.dev/api/x402"
+
+
+# ── Endpoint normalization ─────────────────────────────────────
+
+def _clean_base_url(url: str) -> str:
+    """Return a stable base URL without a trailing slash."""
+    return (url or "").strip().rstrip("/")
+
+
+def _endpoint_is_loopback(endpoint_uri: str) -> bool:
+    """Return True when endpointURI points at a loopback host."""
+    if not endpoint_uri:
+        return False
+    try:
+        parsed = urlparse(endpoint_uri)
+    except Exception:
+        return False
+    hostname = (parsed.hostname or "").lower()
+    return hostname in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+
+
+def _configured_public_base_url() -> Optional[str]:
+    """Return the configured public x402 base URL, if one is set.
+
+    X402_SELF_URL is authoritative. X402_PUBLIC_URL is also accepted as an
+    explicit public base. The demo fallback below is deliberately not included
+    here so it can stay service-aware.
+    """
+    return (
+        _clean_base_url(os.environ.get("X402_SELF_URL", ""))
+        or _clean_base_url(os.environ.get("X402_PUBLIC_URL", ""))
+        or None
+    )
+
+
+def _normalize_public_endpoint(endpoint_uri: str, service_id: int) -> str:
+    """Return a buyer-usable endpoint for discovered services.
+
+    For loopback endpointURI values, prefer configured X402_SELF_URL then
+    X402_PUBLIC_URL. If neither env var is set, use the known current public
+    demo base only as a last-resort compatibility fallback for stale demo
+    service #1. Leave all other service ids untouched; explicit --server
+    overrides are applied later by _resolve_request_url and still take
+    precedence.
+    """
+    if not _endpoint_is_loopback(endpoint_uri):
+        return endpoint_uri
+
+    public_base_url = _configured_public_base_url()
+    if public_base_url:
+        return public_base_url
+    if service_id == STALE_DEMO_SERVICE_ID:
+        return LAST_RESORT_DEMO_PUBLIC_X402_SERVER
+    return endpoint_uri
 
 
 # ── x402 Client ────────────────────────────────────────────────
@@ -90,7 +146,7 @@ class X402Client:
                 "token": s["tokenId"] or "SETH",
                 "chain": s["chainId"] or "SETH",
                 "address": s["paymentAddress"],
-                "endpoint": s["endpointURI"],
+                "endpoint": _normalize_public_endpoint(s["endpointURI"], s["id"]),
                 "protocol": s["protocol"] or "x402",
                 "price_usd": f"${float(price_seth) * 3000:.2f}",
                 "active": s["active"],

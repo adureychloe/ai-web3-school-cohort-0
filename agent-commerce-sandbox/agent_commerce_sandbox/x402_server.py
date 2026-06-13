@@ -55,18 +55,155 @@ _DEFAULT_SELF_HOSTS = {
     "127.0.0.1:8080", "localhost:8080", "0.0.0.0:8080",
 }
 
+# Hosts allowed for deriving a public endpoint from forwarded request headers
+# when no configured public base URL is set. No defaults are trusted: public
+# rewrites require an exact hostname listed in comma-separated
+# X402_ALLOWED_PUBLIC_HOSTS.
+_DEFAULT_ALLOWED_PUBLIC_HOSTS: set[str] = set()
+
+# Last-resort compatibility for the stale demo registry entry whose endpointURI
+# is still loopback. Do not use this fallback for newly registered services.
+STALE_DEMO_SERVICE_ID = 1
+LAST_RESORT_DEMO_PUBLIC_X402_SERVER = "https://gradually-clicker-tacking.ngrok-free.dev/api/x402"
+
 
 def _self_hosts() -> set[str]:
     hosts = set(_DEFAULT_SELF_HOSTS)
-    env_url = os.environ.get("X402_SELF_URL", "").strip()
-    if env_url:
-        try:
-            netloc = urlparse(env_url).netloc or env_url
-            if netloc:
-                hosts.add(netloc.lower())
-        except Exception:
-            pass
+    for env_name in ("X402_SELF_URL", "X402_PUBLIC_URL"):
+        env_url = os.environ.get(env_name, "").strip()
+        if env_url:
+            try:
+                netloc = urlparse(env_url).netloc or env_url
+                if netloc:
+                    hosts.add(netloc.lower())
+            except Exception:
+                pass
     return hosts
+
+
+def _clean_base_url(url: str) -> str:
+    """Return a stable base URL without a trailing slash."""
+    return (url or "").strip().rstrip("/")
+
+
+def _first_header_value(value: Optional[str]) -> str:
+    """Return the first comma-separated forwarded header value."""
+    return (value or "").split(",", 1)[0].strip()
+
+
+def _allowed_public_hosts() -> set[str]:
+    """Return exact normalized hostnames allowed for public endpoint derivation."""
+    hosts = set(_DEFAULT_ALLOWED_PUBLIC_HOSTS)
+    for host in os.environ.get("X402_ALLOWED_PUBLIC_HOSTS", "").split(","):
+        host = host.strip().lower()
+        if not host:
+            continue
+        try:
+            parsed = urlparse(host if "://" in host else f"//{host}")
+            hostname = parsed.hostname or host
+        except Exception:
+            hostname = host
+        hostname = hostname.strip("[]").lower()
+        if hostname:
+            hosts.add(hostname)
+    return hosts
+
+
+def _normalize_forwarded_public_host(host_value: str) -> Optional[str]:
+    """Return normalized forwarded host[:port] if its hostname is explicitly allowed."""
+    if not host_value:
+        return None
+    try:
+        parsed = urlparse(host_value if "://" in host_value else f"//{host_value}")
+        hostname = (parsed.hostname or "").strip("[]").lower()
+        port = parsed.port
+    except Exception:
+        return None
+    if (
+        not hostname
+        or parsed.username
+        or parsed.password
+        or parsed.path not in ("", "/")
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+        or hostname not in _allowed_public_hosts()
+    ):
+        return None
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    return f"{hostname}:{port}" if port is not None else hostname
+
+
+def _configured_public_base_url() -> Optional[str]:
+    """Return the configured public x402 base URL, if one is set.
+
+    X402_SELF_URL is the primary authoritative base for this seller.
+    X402_PUBLIC_URL is also accepted as an explicitly configured public base.
+    """
+    return (
+        _clean_base_url(os.environ.get("X402_SELF_URL", ""))
+        or _clean_base_url(os.environ.get("X402_PUBLIC_URL", ""))
+        or None
+    )
+
+
+def _forwarded_public_base_url(request: Request) -> Optional[str]:
+    """Derive this x402 service's public base URL only from trusted headers.
+
+    X-Forwarded-Host is considered only when its normalized hostname exactly
+    matches comma-separated X402_ALLOWED_PUBLIC_HOSTS and X-Forwarded-Proto is
+    exactly "http" or "https". Localhost/base_url and wildcard public tunnel
+    hosts are not trusted for loopback endpoint rewrites.
+    """
+    root_path = (request.scope.get("root_path") or "").rstrip("/")
+    forwarded_proto = _first_header_value(request.headers.get("x-forwarded-proto"))
+    forwarded_host = _normalize_forwarded_public_host(
+        _first_header_value(request.headers.get("x-forwarded-host"))
+    )
+    if forwarded_proto in {"http", "https"} and forwarded_host:
+        return _clean_base_url(f"{forwarded_proto}://{forwarded_host}{root_path}")
+
+    return None
+
+
+def _public_base_url(request: Request) -> Optional[str]:
+    """Return an authoritative/trusted public base URL for this server, if any."""
+    return _configured_public_base_url() or _forwarded_public_base_url(request)
+
+
+def _endpoint_is_loopback(endpoint_uri: str) -> bool:
+    """Return True when endpointURI points at a loopback host."""
+    if not endpoint_uri:
+        return False
+    try:
+        parsed = urlparse(endpoint_uri)
+    except Exception:
+        return False
+    hostname = (parsed.hostname or "").lower()
+    return hostname in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+
+
+def _normalize_public_endpoint(
+    endpoint_uri: str,
+    service_id: int,
+    public_base_url: Optional[str],
+) -> str:
+    """Return the buyer-visible endpoint for a registry service.
+
+    Loopback endpointURI values are rewritten to a configured/trusted public
+    base URL when one is available. If no public base is configured or safely
+    derived, only stale demo service #1 receives the known current demo public
+    fallback; all other loopback endpoints remain raw to avoid misrouting newly
+    registered services.
+    """
+    if not _endpoint_is_loopback(endpoint_uri):
+        return endpoint_uri
+    if public_base_url:
+        return public_base_url
+    if service_id == STALE_DEMO_SERVICE_ID:
+        return LAST_RESORT_DEMO_PUBLIC_X402_SERVER
+    return endpoint_uri
 
 
 def _endpoint_is_local(endpoint_uri: str) -> bool:
@@ -437,7 +574,7 @@ async def x402_request(
 
 
 @x402_app.get("/services")
-async def x402_services():
+async def x402_services(request: Request):
     """List all active services available for purchase.
 
     Returns a flat list of service dicts with id, name, description,
@@ -448,6 +585,8 @@ async def x402_services():
         raw_list = chain.list_services(0, 200)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list services: {e}")
+
+    public_base = _public_base_url(request)
 
     services = []
     for svc in raw_list:
@@ -465,7 +604,7 @@ async def x402_services():
             "token": svc["tokenId"] or "SETH",
             "chain": svc["chainId"] or "SETH",
             "address": svc["paymentAddress"],
-            "endpoint": svc["endpointURI"],
+            "endpoint": _normalize_public_endpoint(svc["endpointURI"], svc["id"], public_base),
             "protocol": svc["protocol"] or "x402",
             "price_usd": f"${float(price_seth) * 3000:.2f}",
             "active": svc["active"],
