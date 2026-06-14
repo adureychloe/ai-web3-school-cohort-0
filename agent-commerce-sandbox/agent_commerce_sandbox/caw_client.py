@@ -40,6 +40,56 @@ DEFAULT_POLICY = json.dumps([
 
 # ── Helpers ───────────────────────────────────────────────────
 
+
+class PactTerminalStatusError(RuntimeError):
+    """Raised when a Pact reaches a terminal non-active status while waiting."""
+
+    def __init__(self, pact_id: str, status: str):
+        self.pact_id = pact_id
+        self.status = status
+        super().__init__(f"Pact {pact_id} reached terminal status: {status}")
+
+
+def _pact_result(pact: dict) -> dict:
+    if isinstance(pact, dict) and isinstance(pact.get("result"), dict):
+        return pact["result"]
+    return pact if isinstance(pact, dict) else {}
+
+
+def _pact_allows_payment(pact: dict, payment: dict) -> bool:
+    pact = _pact_result(pact)
+    if str(pact.get("status", "")).lower() != "active":
+        return False
+    expected_chain = str(payment.get("chain_id") or "SETH").lower()
+    expected_token = str(payment.get("token_id") or "SETH").lower()
+    expected_addr = str(payment.get("address") or "").lower()
+    if not expected_addr:
+        return False
+
+    for policy in pact.get("spec", {}).get("policies", []) or []:
+        rules = policy.get("rules", {}) if isinstance(policy, dict) else {}
+        when = rules.get("when", {}) if isinstance(rules, dict) else {}
+        chains = [str(c).lower() for c in when.get("chain_in", []) or []]
+        tokens = when.get("token_in", []) or []
+        destinations = when.get("destination_address_in", []) or []
+        chain_ok = not chains or expected_chain in chains
+        token_ok = not tokens or any(
+            isinstance(t, dict)
+            and str(t.get("chain_id", "")).lower() == expected_chain
+            and str(t.get("token_id", "")).lower() == expected_token
+            for t in tokens
+        )
+        dest_ok = any(
+            isinstance(d, dict)
+            and str(d.get("chain_id", "")).lower() == expected_chain
+            and str(d.get("address", "")).lower() == expected_addr
+            for d in destinations
+        )
+        if chain_ok and token_ok and dest_ok:
+            return True
+    return False
+
+
 def _run_caw(*args: str, timeout: int = 60) -> dict:
     """Run a `caw` CLI command and return parsed JSON output.
 
@@ -124,6 +174,37 @@ class CawClient:
         """
         return _run_caw("pact", "show", "--pact-id", pact_id)
 
+    def list_pacts(self, status: str = "active") -> list[dict]:
+        """List pacts by status, returning the CAW result array safely."""
+        data = _run_caw("pact", "list", "--status", status)
+        result = data.get("result", data) if isinstance(data, dict) else {}
+        if isinstance(result, dict):
+            for key in ("pacts", "items"):
+                value = result.get(key)
+                if isinstance(value, list):
+                    return value
+        return result if isinstance(result, list) else []
+
+    def find_active_x402_pact(self, payment: dict) -> Optional[dict]:
+        """Find a reusable active x402-auto-pay Pact that allows this payment."""
+        for summary in self.list_pacts("active"):
+            if not isinstance(summary, dict):
+                continue
+            haystack = f"{summary.get('name', '')} {summary.get('intent', '')}".lower()
+            if "x402-auto-pay" not in haystack:
+                continue
+            pact_id = summary.get("id") or summary.get("pact_id")
+            if not pact_id:
+                continue
+            try:
+                pact = self.get_pact(str(pact_id))
+            except Exception:
+                continue
+            full = _pact_result(pact)
+            if _pact_allows_payment(full, payment):
+                return full
+        return None
+
     def wait_for_pact_active(self, pact_id: str, timeout: int = 300, poll_interval: int = 5) -> dict:
         """Poll pact status until it becomes ACTIVE or timeout.
 
@@ -142,13 +223,16 @@ class CawClient:
         last_status = None
 
         while time.time() < deadline:
-            pact = self.get_pact(pact_id)
-            status = pact.get("status", "unknown")
+            pact = _pact_result(self.get_pact(pact_id))
+            status = str(pact.get("status", "unknown"))
+            status_norm = status.lower()
             if status != last_status:
                 print(f"  [CAW] Pact {pact_id[:12]}... status={status}")
                 last_status = status
-            if status == "active":
+            if status_norm == "active":
                 return pact
+            if status_norm in {"rejected", "revoked", "expired", "completed", "cancelled", "failed"}:
+                raise PactTerminalStatusError(pact_id, status)
             time.sleep(poll_interval)
 
         raise TimeoutError(

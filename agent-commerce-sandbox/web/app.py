@@ -260,7 +260,8 @@ async def api_pact_status(pact_id: str) -> dict[str, Any]:
         data = await to_thread(run_caw_json, "pact", "show", "--pact-id", pact_id, timeout=60)
         pact = data.get("result", data) if isinstance(data, dict) else {"raw": data}
         status = pact.get("status", "unknown") if isinstance(pact, dict) else "unknown"
-        return {"pact_id": pact_id, "status": status, "pact": json_safe(_sanitize_pact(pact))}
+        terminal = str(status).lower() in {"rejected", "revoked", "expired", "completed", "cancelled", "failed"}
+        return {"pact_id": pact_id, "status": status, "terminal": terminal, "pact": json_safe(_sanitize_pact(pact))}
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(status_code=504, detail="Timed out while checking pact status") from exc
     except Exception as exc:
@@ -722,7 +723,7 @@ def _api_x402_buy_blocking(payload: X402BuyRequest) -> dict[str, Any]:
         from urllib.error import HTTPError
         import json as _json
         from agent_commerce_sandbox.x402_client import X402Client
-        from agent_commerce_sandbox.caw_client import CawClient
+        from agent_commerce_sandbox.caw_client import CawClient, PactTerminalStatusError
 
         if payload.wallet_address:
             try:
@@ -785,6 +786,15 @@ def _api_x402_buy_blocking(payload: X402BuyRequest) -> dict[str, Any]:
             except Exception:
                 _x402_pact_id = None
 
+        # No in-memory active pact after restart? Recover a compatible reusable
+        # x402-auto-pay Pact from CAW before creating another approval request.
+        if not pact_id:
+            recovered_pact = caw.find_active_x402_pact(payment)
+            if recovered_pact:
+                pact_id = recovered_pact.get("id") or recovered_pact.get("pact_id")
+                if pact_id:
+                    _x402_pact_id = pact_id
+
         # No active pact — create a reusable one
         if not pact_id:
             policies = _json.dumps([{
@@ -823,6 +833,15 @@ def _api_x402_buy_blocking(payload: X402BuyRequest) -> dict[str, Any]:
                 # another one.
                 try:
                     caw.wait_for_pact_active(pact_id, timeout=300)
+                except PactTerminalStatusError as exc:
+                    if _x402_pact_id == pact_id:
+                        _x402_pact_id = None
+                    return {
+                        "status": "failed",
+                        "pact_id": pact_id,
+                        "pact": {"pact_id": pact_id, "status": exc.status},
+                        "error": f"Pact was {exc.status} in CAW App — purchase cancelled.",
+                    }
                 except TimeoutError:
                     return _pending_approval_response(
                         pact_id,

@@ -684,11 +684,14 @@ function pollPact(pactId) {
   state.pactPollTimer = setInterval(async () => {
     try {
       const info = await api(`/api/pact/${encodeURIComponent(pactId)}/status`);
+      const statusText = String(info.status || "unknown");
+      const statusLower = statusText.toLowerCase();
       if (info.status !== state.lastPactStatus) {
         state.lastPactStatus = info.status;
-        log(`Pact ${short(pactId)} status: ${info.status}`, String(info.status).toLowerCase() === "active" ? "good" : "warn");
+        log(`Pact ${short(pactId)} status: ${info.status}`, statusLower === "active" ? "good" : (info.terminal ? "bad" : "warn"));
       }
-      if (String(info.status).toLowerCase() === "active") { clearInterval(state.pactPollTimer); state.pactPollTimer = null; }
+      if (statusLower === "active") { clearInterval(state.pactPollTimer); state.pactPollTimer = null; }
+      if (info.terminal) { clearInterval(state.pactPollTimer); state.pactPollTimer = null; log(`Pact ${short(pactId)} ended as ${statusText}; stopped waiting for approval.`, "bad"); }
     } catch (err) { log(`Pact status check failed: ${err.message}`, "bad"); }
   }, 3000);
 }
@@ -961,9 +964,10 @@ async function loadAdminServices() {
       if (!lastStatus) lastStatus = {};
       lastStatus.x402_provider = data.x402_provider;
     }
-    state.adminServices = data.services || [];
+    const services = data.services || [];
+    state.adminServices = seller ? services.filter((s) => s.active) : services;
     renderAdminServices();
-    lifecycleLog(`Loaded ${state.adminServices.length} ${seller ? "seller-owned " : ""}service${state.adminServices.length === 1 ? "" : "s"}.`, "good");
+    lifecycleLog(`Loaded ${state.adminServices.length} ${seller ? "active seller-owned " : ""}service${state.adminServices.length === 1 ? "" : "s"}.`, "good");
   } catch (err) {
     state.adminServices = [];
     state.sellerServicesMeta = null;
@@ -1273,15 +1277,41 @@ async function x402Buy() {
       body: JSON.stringify({ service_id: serviceId, query, wallet_address: connectedWallet }),
       timeout: 400000,  // allow up to 400s for CAW approval + transfer
     });
+    const status = String(result.status || "").toLowerCase();
     const content = result.content || "";
-    x402Log("✅ Payment complete — content delivered!", "good");
+    if (status === "completed") {
+      x402Log("✅ Payment complete — content delivered!", "good");
+    } else if (status === "pending_approval") {
+      const pactId = extractPactId(result);
+      x402Log("⏳ Pact submitted — approve once in CAW App; later buys reuse it.", "warn");
+      if (pactId) pollPact(pactId);
+    } else if (status === "failed" || status === "cancelled") {
+      x402Log(`❌ Auto-pay failed: ${result.error || "purchase cancelled"}`, "bad");
+    } else {
+      x402Log(`ℹ️ x402 flow status: ${result.status || "unknown"}`, "warn");
+    }
+    if (result.error && status !== "failed" && status !== "cancelled") x402Log(result.error, "warn");
     if (result.tx_hash) x402Log(`Tx: ${result.tx_hash.slice(0,42)}...`, "good");
     if (result.amount_paid) x402Log(`Paid: ${result.amount_paid}`, "good");
     if (result.proof) x402Log(`Delivery proof recorded: ${result.proof.tx_hash || result.proof.txHash || "recorded"}`, "good");
     if (result.proof_error) x402Log(`Delivery proof error: ${result.proof_error}`, "warn");
-    el("x402ResultIcon").textContent = "✅";
-    el("x402ResultTitle").textContent = result.amount_paid ? `Delivered — ${result.amount_paid} paid` : "Service Delivered";
-    el("x402ResultTitle").style.color = "var(--green)";
+    if (status === "completed") {
+      el("x402ResultIcon").textContent = "✅";
+      el("x402ResultTitle").textContent = result.amount_paid ? `Delivered — ${result.amount_paid} paid` : "Service Delivered";
+      el("x402ResultTitle").style.color = "var(--green)";
+    } else if (status === "pending_approval") {
+      el("x402ResultIcon").textContent = "⏳";
+      el("x402ResultTitle").textContent = "Pact Submitted — Approve in CAW App";
+      el("x402ResultTitle").style.color = "var(--yellow)";
+    } else if (status === "failed" || status === "cancelled") {
+      el("x402ResultIcon").textContent = "❌";
+      el("x402ResultTitle").textContent = result.error || "Auto-pay Failed";
+      el("x402ResultTitle").style.color = "var(--red)";
+    } else {
+      el("x402ResultIcon").textContent = "ℹ️";
+      el("x402ResultTitle").textContent = `Status: ${result.status || "unknown"}`;
+      el("x402ResultTitle").style.color = "var(--muted)";
+    }
     let detailHtml = "";
     if (result.proof && (result.proof.tx_hash || result.proof.txHash)) {
       const ptx = result.proof.tx_hash || result.proof.txHash;
