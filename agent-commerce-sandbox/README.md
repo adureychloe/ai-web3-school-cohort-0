@@ -1,47 +1,107 @@
 # Agent Commerce Hub
 
 > AI × Web3 Agentic Builders Hackathon — Cobo 赛道  
-> 让 Agent 通过链上合约发现服务，通过 CAW 安全支付，通过智能合约存证交付
+> 一个 Web3 原生服务市场：Seller Agent 把服务注册到链上，Buyer Agent 用 Cobo Agentic Wallet 通过 x402 自动购买，交付结果写回链上形成可审计证明。
 
 ---
 
-## 项目概览
+## 一句话
 
-Agent Commerce Hub 是一个 **Agent-Native Payment** 参考实现，展示 AI Agent 如何：
+**Agent Commerce Hub 让 AI Agent/服务商把可调用服务发布到 `ServiceRegistryV2`，让买家或 Buyer Agent 通过 x402 + Cobo Agentic Wallet 完成授权支付，并把交付证明留存在 Sepolia 合约上。**
 
-1. **发现服务** — 查询 `ServiceRegistry.sol` 链上合约获取服务列表
-2. **授权支付** — 通过 Cobo Agentic Wallet (CAW) 创建 Pact，限定金额、链、收款地址
-3. **执行转账** — 用户在 CAW App 批准后，CAW 链上执行 Transfer
-4. **交付存证** — 将支付 hash 写入合约，形成不可篡改的审计追踪
+## 当前状态
+
+当前版本已经不是早期的 mock/手动付款 demo，而是一个可运行的 **ServiceRegistryV2 + x402 + CAW** 闭环：
+
+- **链上服务发现**：默认读取 Sepolia `ServiceRegistryV2`，legacy V1 仅保留在 `/api/legacy/*` 调试路径。
+- **公开服务注册**：Seller 可以把服务名称、描述、价格、endpoint、收款地址发布到链上。
+- **x402 服务调用**：买家访问服务 endpoint 时先收到 `402 payment_required`，再由后端 CAW 自动完成 Pact/Transfer。
+- **Buyer CAW 会话**：Web UI 有全局 Buyer CAW Wallet 区块，连接一次后可复用于服务卡片、`Find & Pay` 和 Direct x402 Checkout，也可断开连接。
+- **Seller 自服务管理**：Seller 连接浏览器钱包后，可查看自己注册的服务，并更新或下架自己拥有的服务；历史交付证明不删除。
+- **链上交付证明**：支付和交付记录写入合约，形成可验证审计轨迹。
+- **Agent 化方向清晰**：现有 Web UI 是人类控制台；同一套 API 可以给 Seller Agent、Buyer Agent 和 Broker/Procurement Agent 调用。
 
 ## 架构
 
+```text
+┌──────────────────────────────────────────────────────────────┐
+│                        Web UI / CLI                          │
+│  Buyer Dashboard │ Seller Dashboard │ Direct x402 Checkout   │
+│  run.py discover/pay/procure/status/proof                    │
+└───────────────┬───────────────────────────────┬──────────────┘
+                │                               │
+                ▼                               ▼
+┌──────────────────────────────┐   ┌───────────────────────────┐
+│ FastAPI Marketplace API       │   │ x402 Seller Server         │
+│ /api/services                 │   │ /request                   │
+│ /api/procure                  │   │ /services                  │
+│ /api/x402-buy                 │   │ /register_v2               │
+│ /api/proofs /api/status       │   │ /seller/update_v2          │
+│ /api/legacy/*                 │   │ /seller/remove_v2          │
+└───────────────┬──────────────┘   └──────────────┬────────────┘
+                │                                 │
+                ▼                                 ▼
+┌──────────────────────────────────────────────────────────────┐
+│             ServiceRegistryV2 on Sepolia                     │
+│  public register │ list/get services │ update │ deactivate   │
+│  recordDelivery │ DeliveryProof[] audit trail                 │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│              Cobo Agentic Wallet (CAW)                       │
+│  Pact policy → user approval → server-side auto-pay Transfer │
+│  Buyer CAW address is shown in UI; actual demo auto-pay uses │
+│  the configured server CAW wallet.                           │
+└──────────────────────────────────────────────────────────────┘
 ```
-┌──────────────┐     ┌──────────────────────┐     ┌───────────────────┐
-│  CLI (run.py)│     │  Web UI (FastAPI)     │     │  Procurement      │
-│  │           │     │  │                    │     │  Agent            │
-│  discover    │     │  /api/services        │     │  natural language │
-│  pay         │     │  /api/pay             │     │  → match → pay    │
-│  procure     │     │  /api/procure/match   │     │                   │
-│  proof       │     │  /api/procure         │     │                   │
-│  status      │     │  /api/pact/{id}/status│     │                   │
-└──────┬───────┘     └──────────┬────────────┘     └────────┬──────────┘
-       │                        │                           │
-       └────────────────────────┼───────────────────────────┘
-                                │
-                    ┌───────────▼────────────┐
-                    │  ServiceRegistry.sol    │
-                    │  (Sepolia)              │
-                    │  register / list        │
-                    │  get / recordDelivery   │
-                    └───────────┬────────────┘
-                                │
-                    ┌───────────▼────────────┐
-                    │  Cobo Agentic Wallet    │
-                    │  (CAW)                 │
-                    │  Pact → Transfer        │
-                    │  Policies / Completion  │
-                    └────────────────────────┘
+
+## Demo 流程
+
+### 1. Seller 注册服务
+
+1. Seller 在 Web UI 连接 MetaMask/Rabby 等浏览器钱包。
+2. 填写服务名称、描述、价格、endpoint URI、收款地址。
+3. 提交到 `ServiceRegistryV2`。
+4. 服务进入 buyer discovery，可被 Web UI、CLI 或 Agent 发现。
+
+### 2. Buyer 发现并购买服务
+
+1. Buyer 在 Web UI 选择/连接 Buyer CAW Wallet。
+2. 输入需求，点击 **Find Service** 或 **Find & Pay**。
+3. 系统从 `ServiceRegistryV2` 拉取服务并做匹配。
+4. 购买时调用 x402 endpoint，服务端返回 `402 payment_required`。
+5. 后端通过 CAW 创建/复用 Pact，用户在 CAW App 批准后自动转账。
+6. 服务返回交付内容，支付/交付证明写入链上。
+
+### 3. Seller 管理服务
+
+1. Seller 连接注册服务时使用的钱包。
+2. 在 **My Services** 中查看自己拥有的 ServiceRegistryV2/x402 服务。
+3. 可更新服务 metadata，或通过 `deactivate()` 从 buyer discovery 中下架。
+4. 删除是软删除：历史 proof 和链上记录仍可审计。
+
+## Agent 化设计
+
+Web UI 只是演示控制台；真正的目标是让 Agent 自动完成注册、发现、购买、验证。
+
+| Agent | 能力 | 当前对应能力 | 下一步 API |
+|---|---|---|---|
+| **Seller Agent** | 根据服务描述自动发布/更新服务 | `POST /register_v2`, `/seller/update_v2` | `POST /api/agent/seller/register` |
+| **Buyer Agent** | 根据任务意图发现、预算过滤、购买、验收 | `/api/services`, `/api/procure`, `/api/x402-buy` | `POST /api/agent/buyer/procure` |
+| **Broker / Procurement Agent** | 多服务比价、选择最优服务、返回 proof | `procurement_agent.py`, `run.py procure` | 规则版 → LLM reasoning |
+
+MVP Agent 路径：
+
+```text
+user intent
+  → Buyer Agent parses budget / desired output
+  → reads ServiceRegistryV2 services
+  → ranks candidates by keyword + price + availability
+  → calls x402 endpoint
+  → CAW Pact / Transfer
+  → validates delivery
+  → returns content + on-chain proof
 ```
 
 ## 快速开始
@@ -49,9 +109,10 @@ Agent Commerce Hub 是一个 **Agent-Native Payment** 参考实现，展示 AI A
 ### 前置条件
 
 - Python 3.11+
-- Cobo Agentic Wallet CLI (`caw`) — [安装指南](https://www.cobo.com/products/agentic-wallet/manual/start-here/introduction)
-- CAW 钱包已配对 ([iOS](https://apps.apple.com/app/id6761912352) / [Android](https://play.google.com/store/apps/details?id=com.cobo.agenticwallet))
-- Sepolia ETH（合约部署用）
+- Node.js（用于前端脚本检查，可选）
+- Cobo Agentic Wallet CLI (`caw`) 和已配对的钱包
+- Sepolia ETH / SETH 测试资产
+- 浏览器钱包（Seller 注册、更新、下架服务时使用）
 
 ### 安装
 
@@ -62,7 +123,17 @@ pip install -r requirements.txt
 
 ### 配置
 
-CAW 凭证自动从 `~/.cobo-agentic-wallet/` 读取。合约部署信息在 `contracts/deployed.json`。
+- CAW 凭证由本机 `caw` CLI 读取，不提交到 Git。
+- V2 合约部署信息在 `contracts/deployed_v2.json`。
+- Legacy V1 合约部署信息在 `contracts/deployed.json`，仅用于 `/api/legacy/*` 调试路径。
+
+### 启动 Web Demo
+
+```bash
+python3 -m uvicorn web.app:app --host 0.0.0.0 --port 8080 --timeout-keep-alive 600
+```
+
+打开：`http://localhost:8080`
 
 ### CLI 用法
 
@@ -70,150 +141,141 @@ CAW 凭证自动从 `~/.cobo-agentic-wallet/` 读取。合约部署信息在 `co
 # 查看链上服务列表
 python run.py discover
 
-# 自然语言采购（推荐）
-python run.py procure "帮我写一份ETH市场分析报告"
+# 自然语言采购
+python run.py procure "帮我写一份 ETH 市场分析报告"
 
 # 指定服务 ID 支付
-python run.py pay 1 "帮我做Web3市场研究"
+python run.py pay 1 "帮我做 Web3 市场研究"
 
 # 查看交付存证
 python run.py proof
 
 # 系统状态
 python run.py status
+
+# 启动 x402 seller 服务
+python run.py serve 8888
+
+# 指定服务 ID 走 x402 auto-pay
+python run.py request 1 "生成一份研究摘要"
 ```
 
-### Web UI
+## 主要 API
 
-```bash
-python -m uvicorn web.app:app --host 0.0.0.0 --port 8080
-```
+### Buyer / Marketplace
 
-打开浏览器访问 `http://localhost:8080`
+| Method | Path | 说明 |
+|---|---|---|
+| `GET` | `/api/services` | 默认 V2/x402 服务发现 |
+| `GET` | `/api/services/all` | V2 服务，可选包含 legacy |
+| `POST` | `/api/procure/match` | 根据需求匹配服务 |
+| `POST` | `/api/procure` | 匹配并购买 |
+| `POST` | `/api/x402-buy` | 指定服务直接走 x402/CAW auto-pay |
+| `GET` | `/api/proofs` | V2 交付证明 |
+| `GET` | `/api/status` | 系统状态 |
 
-支持两种操作模式：
-- **Find Service** — 输入需求 → 匹配排名 → 手动确认支付
-- **Find & Pay** 🚀 — 输入需求 → 自动匹配 → 一键全流程
+### x402 Seller
 
-## CAW 集成说明
+| Method | Path | 说明 |
+|---|---|---|
+| `POST` | `/api/x402/request` | x402 payment-required probe |
+| `POST` | `/api/x402/register_v2` | 注册 V2 服务 |
+| `GET` | `/api/x402/seller/services_v2` | Seller 查看自己服务 |
+| `POST` | `/api/x402/seller/update_v2` | Seller 自服务更新 |
+| `POST` | `/api/x402/seller/remove_v2` | Seller 自服务下架 |
+| `GET` | `/api/x402/health` | x402 seller server 健康检查 |
 
-### 核心集成点
+### Legacy
 
-| 模块 | 位置 | 说明 |
-|------|------|------|
-| CAW CLI 封装 | `agent_commerce_sandbox/caw_client.py` | Python subprocess 调用 `caw` CLI |
-| 支付编排 | `agent_commerce_sandbox/engine.py` | 5步流程：查合约→Pact→批准→Transfer→存证 |
-| 余额检查 | `agent_commerce_sandbox/procurement_agent.py` | `get_balance()` 查询 SETH 余额 |
-| Web API | `web/app.py` | `/api/pay`, `/api/pact/{id}/status` |
-
-### CAW 支付流程
-
-```
-1. caw pact submit --intent "..." --policies '[transfer, contract_call]' --completion-conditions 'tx_count: 2'
-2. User approves in CAW App (手机批准)
-3. caw tx transfer --pact-id <uuid> --src-address <addr> --dst-address <addr> --amount <n> --token-id SETH
-4. caw tx call --pact-id <uuid> --contract <ServiceRegistry> --calldata <encoded recordDelivery()>
-5. caw tx get --tx-id <uuid> → 确认两笔链上交易
-```
-
-**全部资金操作通过 CAW 完成** — 不需要 EOA 私钥。Pact 同时包含 `transfer` 和 `contract_call` 两种策略，支付和存证都在同一个授权范围内。
-
-### 关键 CAW 凭证
-
-| 项目 | 值 |
-|------|-----|
-| Agent | Hermes |
-| Wallet UUID | `511ef1fb-90b0-4740-a80f-ce7db6f9c6f9` |
-| SETH 地址 | `0x9e01312e8e96a8133a3c73bed58a5808ecfceaf5` |
-| API Base | `https://api.agenticwallet.cobo.com` |
+旧版 V1 路径保留在 `/api/legacy/*`，不再作为默认 buyer/seller 流程。
 
 ## 链上证据
 
-### 合约
+### ServiceRegistryV2
 
 | 项目 | 值 |
-|------|-----|
+|---|---|
+| 合约 | `ServiceRegistryV2.sol` |
+| 网络 | Sepolia (`chain_id: 11155111`) |
+| 地址 | [`0x3f945ba7BFE2181B506390c0C5e9d2328495Cc40`](https://sepolia.etherscan.io/address/0x3f945ba7BFE2181B506390c0C5e9d2328495Cc40) |
+| 部署 Tx | [`0x8e6ca555c927a5c9416a0db037ed70847c2592e650ce56ac60d4c281b6e1e18c`](https://sepolia.etherscan.io/tx/0x8e6ca555c927a5c9416a0db037ed70847c2592e650ce56ac60d4c281b6e1e18c) |
+
+### Legacy ServiceRegistry V1
+
+| 项目 | 值 |
+|---|---|
 | 合约 | `ServiceRegistry.sol` |
-| 网络 | Sepolia (chain_id: 11155111) |
+| 网络 | Sepolia (`chain_id: 11155111`) |
 | 地址 | [`0x8F7a124681327B485656Ea6be15Fa1338FA7d8E3`](https://sepolia.etherscan.io/address/0x8F7a124681327B485656Ea6be15Fa1338FA7d8E3) |
-| 部署 Tx | `0xf3d3c11403a733f6a57213cf5caeb05e58191a8063c4cb80a28f20e4085a9cca` |
-
-### 已注册服务
-
-| ID | 名称 | 价格 (SETH) |
-|----|------|------------|
-| 1 | Research Notes Generator | 0.00001 |
-| 2 | On-chain Data Fetcher | 0.00002 |
-| 3 | Premium Market Analyzer | 0.00005 |
-
-### 支付交易
-
-| 交易 | Hash |
-|------|------|
-| CAW Transfer | [`0x9b8a70db067d15102af20b90f376f3e7d4bc696e1be169f83935c07123a4aedf`](https://sepolia.etherscan.io/tx/0x9b8a70db067d15102af20b90f376f3e7d4bc696e1be169f83935c07123a4aedf) |
 
 ## 技术栈
 
 | 层 | 技术 |
-|----|------|
-| 链上 | Solidity 0.8.x, Sepolia |
+|---|---|
+| 链上 | Solidity 0.8.x, Sepolia, `ServiceRegistryV2` |
 | 后端 | Python 3.11+, FastAPI, web3.py |
-| 钱包 | Cobo Agentic Wallet (CAW), `caw` CLI |
+| 支付 | Cobo Agentic Wallet, CAW Pact, x402-style HTTP payment flow |
 | 前端 | HTML + CSS + vanilla JS |
-| 工具 | Claude Code, Codex CLI |
+| Agent | `procurement_agent.py`, `run.py procure`, planned Agent APIs |
 
 ## 项目结构
 
-```
+```text
 agent-commerce-sandbox/
 ├── agent_commerce_sandbox/
-│   ├── __init__.py
-│   ├── chain_client.py          # web3.py 合约交互
-│   ├── caw_client.py            # CAW CLI 封装
-│   ├── engine.py                # 5步支付编排
-│   └── procurement_agent.py     # 自然语言采购
+│   ├── caw_client.py            # CAW CLI 封装与 Pact/Transfer 编排
+│   ├── chain_client.py          # Legacy V1 合约客户端
+│   ├── chain_client_v2.py       # ServiceRegistryV2 合约客户端
+│   ├── engine.py                # Legacy 支付编排
+│   ├── procurement_agent.py     # 自然语言采购 / 匹配逻辑
+│   ├── x402_client.py           # Buyer 侧 x402/CAW 客户端
+│   └── x402_server.py           # Seller 侧 x402 服务与 V2 管理 API
 ├── contracts/
-│   ├── ServiceRegistry.sol      # Solidity 合约
-│   ├── ServiceRegistry.abi.json
-│   └── deployed.json            # 部署信息
+│   ├── ServiceRegistry.sol
+│   ├── ServiceRegistryV2.sol
+│   ├── deployed.json
+│   └── deployed_v2.json
+├── scripts/
+│   ├── deploy_v2.py
+│   └── register_demo_services_v2.py
 ├── web/
-│   ├── app.py                   # FastAPI 后端
-│   └── index.html               # 前端页面
+│   ├── app.py                   # FastAPI marketplace API
+│   └── index.html               # Buyer/Seller Web 控制台
 ├── run.py                       # CLI 入口
 └── README.md
 ```
 
 ## 安全边界
 
-- **Pact 策略限制** — 每笔支付都通过 CAW Pact 限定链、代币、金额和收款地址
-- **测试网资产** — 所有交互使用 Sepolia 测试网 SETH，无真实资金风险
-- **API Key 隔离** — CAW API Key 存储于 `~/.cobo-agentic-wallet/`，不提交到 Git
-- **Web API 安全** — Pact 数据返回浏览器前自动剥离 `api_key` 等敏感字段
-- **人工审批** — 每笔支付需用户在 CAW App 批准，Agent 不能单方面执行
+- **CAW 授权边界**：资金操作通过 CAW Pact 限定链、代币、金额、收款地址和操作类型。
+- **测试网隔离**：当前演示使用 Sepolia / SETH 测试资产。
+- **密钥不入库**：CAW 凭证、私钥、API Key 不写入 README，不提交到 Git。
+- **前端只展示地址语义**：Buyer CAW 地址用于 UI/记录/演示；实际 demo auto-pay 由后端配置的 server CAW wallet 执行。
+- **Seller 自服务权限**：Seller 更新/下架需要证明自己拥有对应服务；server-owned/debug 管理能力不暴露为普通 buyer/seller 删除入口。
+- **历史可审计**：下架是 `deactivate()`，历史 proof 和链上记录保留。
 
 ## 评审标准对齐
 
 | 维度 | 实现 |
-|------|------|
-| 场景贴合度 | Agent 通过链上合约发现付费服务，通过 CAW 完成支付和存证 |
-| CAW 关键性 | CAW 是支付流程中不可替代的核心组件（Pact → Transfer） |
-| 资金流程完整度 | 任务触发 → 合约查询 → Pact 创建 → App 批准 → Transfer → 链上存证 |
-| 可演示性 | CLI + Web UI 双入口，支持自然语言采购一键流程 |
-| 风险边界说明 | Pact 策略、测试网隔离、API Key 保护、人工审批机制 |
+|---|---|
+| 场景贴合度 | Agent 发现链上服务，通过 x402/CAW 购买，交付结果链上存证 |
+| CAW 关键性 | CAW Pact/Transfer 是支付授权和执行核心 |
+| Agent-Native | Web UI 与 CLI 只是控制面；服务注册、发现、购买、验收均可由 Agent API 调用 |
+| 可演示性 | Buyer Dashboard + Seller Dashboard + Direct x402 Checkout + CLI |
+| 风险边界 | Pact policy、测试网、敏感信息隔离、Seller ownership/self-service 校验 |
 
-## 开发
+## 开发检查
 
 ```bash
-# 编译检查
-python3 -m py_compile run.py
-python3 -m py_compile web/app.py
-
-# 跑通全链路（需要 CAW 钱包）
-python run.py status
-python run.py discover
-python run.py procure "测试"
+python3 -m py_compile web/app.py agent_commerce_sandbox/*.py
+python3 - <<'PY'
+from html.parser import HTMLParser
+from pathlib import Path
+HTMLParser().feed(Path('web/index.html').read_text())
+print('html parser ok')
+PY
 ```
 
-## 许可证
+## License
 
 MIT

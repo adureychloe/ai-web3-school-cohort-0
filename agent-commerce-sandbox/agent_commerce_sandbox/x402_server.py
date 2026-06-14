@@ -289,7 +289,7 @@ def _endpoint_is_local(endpoint_uri: str) -> bool:
 # Replay protection: track used proof IDs to prevent double-spend
 _used_proofs: set[str] = set()
 
-# Replay protection for seller self-service destructive signatures.
+# Replay protection for seller self-service signatures.
 _used_seller_remove_messages: set[str] = set()
 
 # Track revenue in-memory (for demo; in production use contract events)
@@ -371,15 +371,16 @@ def _service_provider_is_server_owner(raw_service: dict) -> bool:
         owner = _normalize_address(X402_PROVIDER)
     except HTTPException:
         return False
-    return provider.lower() == owner.lower()
+    return provider == owner
 
 
 def _seller_owns_raw_service(raw_service: dict, seller: str) -> bool:
-    """Return True if seller may manage the service via self-service routes.
+    """Return True if seller is related to the service for dashboard listing.
 
-    A service paymentAddress is accepted only for services registered by the
-    hosted server owner/deployer (X402_PROVIDER). For services whose on-chain
-    provider is any other address, the connected seller must be that provider.
+    A service provider may see its own service in the seller dashboard. Payment
+    address ownership is accepted only for services registered by the hosted
+    server owner/deployer (X402_PROVIDER). Mutating self-service routes perform
+    an additional server-owned-provider gate before submitting any transaction.
     """
     try:
         seller_norm = _normalize_address(seller).lower()
@@ -446,6 +447,91 @@ def _chain_signature_chain_id(chain: ChainClientV2) -> str:
     return str(getattr(chain, "chain_id", "") or "")
 
 
+def _validate_seller_action_message(
+    *,
+    seller: str,
+    service_id: int,
+    message: str,
+    raw_service: dict,
+    chain: ChainClientV2,
+    request: Request,
+    action: str = "remove_v2",
+    extra_fields: Optional[dict[str, object]] = None,
+) -> dict:
+    """Parse and validate the exact seller-signed self-service message fields."""
+    action_label = "update" if action == "update_v2" else "remove"
+    if not message:
+        raise HTTPException(status_code=400, detail=f"Seller {action_label} message is required")
+    message = message.strip()
+    try:
+        data = json.loads(message)
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Seller {action_label} message must be JSON")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail=f"Seller {action_label} message must be a JSON object")
+
+    expected_fields = {
+        "action",
+        "service_id",
+        "seller_address",
+        "chain_id",
+        "contract_address",
+        "origin",
+        "expires_at",
+    } | set((extra_fields or {}).keys())
+    if set(data.keys()) != expected_fields:
+        raise HTTPException(status_code=400, detail=f"Seller {action_label} message fields do not match {action} schema")
+    if data.get("action") != action:
+        raise HTTPException(status_code=400, detail=f"Invalid seller {action_label} action")
+
+    for field, expected in (extra_fields or {}).items():
+        actual = data.get(field)
+        if str(actual if actual is not None else "") != str(expected if expected is not None else ""):
+            raise HTTPException(status_code=400, detail=f"Seller {action_label} {field} mismatch")
+
+    try:
+        msg_service_id = int(data.get("service_id"))
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid seller {action_label} service_id")
+    if msg_service_id != int(service_id):
+        raise HTTPException(status_code=400, detail=f"Seller {action_label} service_id mismatch")
+
+    msg_seller = _normalize_address(str(data.get("seller_address") or ""))
+    if msg_seller.lower() != seller.lower():
+        raise HTTPException(status_code=400, detail=f"Seller {action_label} seller_address mismatch")
+
+    expected_chain_id = _chain_signature_chain_id(chain)
+    if str(data.get("chain_id")) != expected_chain_id:
+        raise HTTPException(status_code=400, detail=f"Seller {action_label} chain_id mismatch")
+
+    try:
+        msg_contract = _normalize_address(str(data.get("contract_address") or ""))
+        expected_contract = _normalize_address(chain.contract_addr)
+    except HTTPException:
+        raise HTTPException(status_code=400, detail=f"Invalid seller {action_label} contract_address")
+    if msg_contract.lower() != expected_contract.lower():
+        raise HTTPException(status_code=400, detail=f"Seller {action_label} contract_address mismatch")
+
+    msg_origin = _normalize_origin_value(str(data.get("origin") or ""))
+    if not msg_origin:
+        raise HTTPException(status_code=400, detail=f"Invalid seller {action_label} origin")
+    origin_candidates = _request_origin_candidates(request)
+    if origin_candidates and msg_origin not in origin_candidates:
+        raise HTTPException(status_code=403, detail=f"Seller {action_label} origin mismatch")
+
+    try:
+        expires_at = int(data.get("expires_at"))
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid seller {action_label} expires_at")
+    now_ts = int(time.time())
+    if expires_at <= now_ts:
+        raise HTTPException(status_code=400, detail=f"Seller {action_label} signature has expired")
+    if expires_at > now_ts + 3600:
+        raise HTTPException(status_code=400, detail=f"Seller {action_label} expiry is too far in the future")
+
+    return data
+
+
 def _validate_seller_remove_message(
     *,
     seller: str,
@@ -456,70 +542,15 @@ def _validate_seller_remove_message(
     request: Request,
 ) -> dict:
     """Parse and validate the exact seller remove_v2 signed message fields."""
-    if not message:
-        raise HTTPException(status_code=400, detail="Seller remove message is required")
-    message = message.strip()
-    try:
-        data = json.loads(message)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Seller remove message must be JSON")
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail="Seller remove message must be a JSON object")
-
-    expected_fields = {
-        "action",
-        "service_id",
-        "seller_address",
-        "chain_id",
-        "contract_address",
-        "origin",
-        "expires_at",
-    }
-    if set(data.keys()) != expected_fields:
-        raise HTTPException(status_code=400, detail="Seller remove message fields do not match remove_v2 schema")
-    if data.get("action") != "remove_v2":
-        raise HTTPException(status_code=400, detail="Invalid seller remove action")
-    try:
-        msg_service_id = int(data.get("service_id"))
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid seller remove service_id")
-    if msg_service_id != int(service_id):
-        raise HTTPException(status_code=400, detail="Seller remove service_id mismatch")
-
-    msg_seller = _normalize_address(str(data.get("seller_address") or ""))
-    if msg_seller.lower() != seller.lower():
-        raise HTTPException(status_code=400, detail="Seller remove seller_address mismatch")
-
-    expected_chain_id = _chain_signature_chain_id(chain)
-    if str(data.get("chain_id")) != expected_chain_id:
-        raise HTTPException(status_code=400, detail="Seller remove chain_id mismatch")
-
-    try:
-        msg_contract = _normalize_address(str(data.get("contract_address") or ""))
-        expected_contract = _normalize_address(chain.contract_addr)
-    except HTTPException:
-        raise HTTPException(status_code=400, detail="Invalid seller remove contract_address")
-    if msg_contract.lower() != expected_contract.lower():
-        raise HTTPException(status_code=400, detail="Seller remove contract_address mismatch")
-
-    msg_origin = _normalize_origin_value(str(data.get("origin") or ""))
-    if not msg_origin:
-        raise HTTPException(status_code=400, detail="Invalid seller remove origin")
-    origin_candidates = _request_origin_candidates(request)
-    if origin_candidates and msg_origin not in origin_candidates:
-        raise HTTPException(status_code=403, detail="Seller remove origin mismatch")
-
-    try:
-        expires_at = int(data.get("expires_at"))
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid seller remove expires_at")
-    now_ts = int(time.time())
-    if expires_at <= now_ts:
-        raise HTTPException(status_code=400, detail="Seller remove signature has expired")
-    if expires_at > now_ts + 3600:
-        raise HTTPException(status_code=400, detail="Seller remove expiry is too far in the future")
-
-    return data
+    return _validate_seller_action_message(
+        seller=seller,
+        service_id=service_id,
+        message=message,
+        raw_service=raw_service,
+        chain=chain,
+        request=request,
+        action="remove_v2",
+    )
 
 
 def _verify_self_service_signature(
@@ -531,22 +562,32 @@ def _verify_self_service_signature(
     raw_service: dict,
     chain: ChainClientV2,
     request: Request,
-) -> None:
-    """Verify an EIP-191 seller signature for destructive self-service actions."""
-    _validate_seller_remove_message(
+    action: str = "remove_v2",
+    extra_fields: Optional[dict[str, object]] = None,
+) -> dict[str, str]:
+    """Verify an EIP-191 seller signature for self-service service management.
+
+    Returns replay metadata for the caller to consume only after the on-chain
+    transaction succeeds. This avoids burning a valid seller authorization when
+    gas submission or execution fails.
+    """
+    action_label = "update" if action == "update_v2" else "remove"
+    _validate_seller_action_message(
         seller=seller,
         service_id=service_id,
         message=message,
         raw_service=raw_service,
         chain=chain,
         request=request,
+        action=action,
+        extra_fields=extra_fields,
     )
     if not signature:
-        raise HTTPException(status_code=400, detail="Seller signature is required for self-service remove")
+        raise HTTPException(status_code=400, detail=f"Seller signature is required for self-service {action_label}")
 
     replay_key = hashlib.sha256(message.encode("utf-8")).hexdigest()
     if replay_key in _used_seller_remove_messages:
-        raise HTTPException(status_code=409, detail="Seller remove signature has already been used")
+        raise HTTPException(status_code=409, detail=f"Seller {action_label} signature has already been used")
 
     try:
         from eth_account.account import Account
@@ -557,7 +598,14 @@ def _verify_self_service_signature(
     if recovered.lower() != seller.lower():
         raise HTTPException(status_code=403, detail="Seller signature does not match seller address")
 
-    _used_seller_remove_messages.add(replay_key)
+    return {"replay_key": replay_key, "recovered": recovered}
+
+
+def _mark_self_service_signature_used(verification: dict[str, str]) -> None:
+    """Consume a verified seller self-service signature after tx success."""
+    replay_key = verification.get("replay_key")
+    if replay_key:
+        _used_seller_remove_messages.add(replay_key)
 
 
 # ── Helpers ─────────────────────────────────────────────────────
@@ -772,6 +820,13 @@ class ServiceLifecycleRequest(BaseModel):
 class SellerRemoveServiceRequest(BaseModel):
     """Seller self-service removal request for a ServiceRegistryV2 service."""
     service_id: int
+    seller_address: str
+    message: str = ""
+    signature: str = ""
+
+
+class SellerUpdateServiceRequest(UpdateV2Request):
+    """Seller self-service update request for a ServiceRegistryV2 service."""
     seller_address: str
     message: str = ""
     signature: str = ""
@@ -1003,7 +1058,7 @@ async def x402_register_v2(payload: RegisterV2Request, x_demo_admin_token: Optio
         "block": result.get("block"),
         "name": payload.name.strip(),
         "price_seth": payload.price_seth,
-        "payment_address": payment_addr,
+        "payment_address": payment_addr.lower(),
         "provider": X402_PROVIDER,
         "endpoint_uri": payload.endpoint_uri.strip(),
     }
@@ -1040,10 +1095,12 @@ async def x402_seller_services_v2(
 ):
     """List services owned by a seller wallet without requiring admin token.
 
-    Ownership mirrors seller remove authorization: provider always owns the
-    service, while paymentAddress owns it only when provider is this hosted
-    server owner (X402_PROVIDER). Inactive services are included so sellers can
-    see lifecycle state after a soft delete.
+    Ownership mirrors seller self-service authorization: this server can submit
+    provider-only update/deactivate transactions only for services whose
+    provider is the hosted server owner (X402_PROVIDER). Within that subset,
+    either the provider or current paymentAddress may manage the service.
+    Inactive services are included so sellers can see lifecycle state after a
+    soft delete.
     """
     seller = _normalize_address(seller_address)
     chain = _get_chain()
@@ -1061,7 +1118,8 @@ async def x402_seller_services_v2(
             continue
         item = _normalize_service(svc)
         item["endpoint"] = _normalize_public_endpoint(svc["endpointURI"], svc["id"], public_base)
-        item["seller_remove_authorized"] = True
+        item["seller_remove_authorized"] = _service_provider_is_server_owner(svc)
+        item["seller_update_authorized"] = item["seller_remove_authorized"]
         item["payment_address_authorized"] = (
             _service_provider_is_server_owner(svc)
             and (svc.get("paymentAddress") or "").lower() == seller.lower()
@@ -1144,6 +1202,93 @@ async def x402_deactivate_v2(payload: ServiceLifecycleRequest, x_demo_admin_toke
     return {"status": "deactivated", "service_id": payload.service_id, "tx_hash": result.get("tx_hash"), "block": result.get("block")}
 
 
+@x402_app.post("/seller/update_v2")
+async def x402_seller_update_v2(payload: SellerUpdateServiceRequest, request: Request):
+    """Seller self-service metadata update for a ServiceRegistryV2 service.
+
+    The seller signs the exact metadata fields before this demo server spends its
+    configured gas key to submit updateService(). No admin/product token is used.
+    """
+    if payload.service_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid service_id")
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="name is required")
+    if not payload.endpoint_uri.strip():
+        raise HTTPException(status_code=400, detail="endpoint_uri is required")
+
+    try:
+        price_wei = Web3.to_wei(float(payload.price_seth), "ether")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid price_seth")
+
+    chain = _get_chain()
+    try:
+        raw = chain.get_service(payload.service_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"Service {payload.service_id} not found")
+    if not raw or raw.get("id") != payload.service_id or not raw.get("name"):
+        raise HTTPException(status_code=404, detail=f"Service {payload.service_id} not found")
+    if not raw.get("active"):
+        raise HTTPException(status_code=409, detail=f"Service {payload.service_id} is inactive")
+
+    if not _service_provider_is_server_owner(raw):
+        raise HTTPException(
+            status_code=403,
+            detail="Seller self-service update is available only for services whose on-chain provider is the server owner",
+        )
+
+    seller = _require_self_service_seller(raw, payload.seller_address)
+    payment_addr_raw = (payload.payment_address or "").strip()
+    if not payment_addr_raw:
+        raise HTTPException(status_code=400, detail="payment_address is required for seller update")
+    try:
+        payment_addr = Web3.to_checksum_address(payment_addr_raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid seller/payment address")
+
+    signed_fields = {
+        "name": payload.name.strip(),
+        "description": payload.description,
+        "price_seth": payload.price_seth,
+        "payment_address": payment_addr.lower(),
+        "endpoint_uri": payload.endpoint_uri.strip(),
+    }
+    verification = _verify_self_service_signature(
+        seller=seller,
+        service_id=payload.service_id,
+        message=payload.message,
+        signature=payload.signature,
+        raw_service=raw,
+        chain=chain,
+        request=request,
+        action="update_v2",
+        extra_fields=signed_fields,
+    )
+
+    try:
+        result = chain.update_service(
+            service_id=payload.service_id,
+            name=payload.name.strip(),
+            desc=payload.description,
+            price_wei=price_wei,
+            payment_addr=payment_addr,
+            endpoint_uri=payload.endpoint_uri.strip(),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"On-chain seller update failed: {exc}")
+    if result.get("status") != 1:
+        raise HTTPException(status_code=500, detail=f"Seller update tx failed: {result.get('tx_hash')}")
+    _mark_self_service_signature_used(verification)
+
+    return {
+        "status": "updated",
+        "service_id": payload.service_id,
+        "seller_address": seller,
+        "tx_hash": result.get("tx_hash"),
+        "block": result.get("block"),
+    }
+
+
 @x402_app.post("/seller/remove_v2")
 async def x402_seller_remove_v2(payload: SellerRemoveServiceRequest, request: Request):
     """Seller self-service soft delete for a ServiceRegistryV2 service.
@@ -1167,8 +1312,14 @@ async def x402_seller_remove_v2(payload: SellerRemoveServiceRequest, request: Re
     if not raw.get("active"):
         raise HTTPException(status_code=409, detail=f"Service {payload.service_id} is already inactive")
 
+    if not _service_provider_is_server_owner(raw):
+        raise HTTPException(
+            status_code=403,
+            detail="Seller self-service remove is available only for services whose on-chain provider is the server owner",
+        )
+
     seller = _require_self_service_seller(raw, payload.seller_address)
-    _verify_self_service_signature(
+    verification = _verify_self_service_signature(
         seller=seller,
         service_id=payload.service_id,
         message=payload.message,
@@ -1184,6 +1335,7 @@ async def x402_seller_remove_v2(payload: SellerRemoveServiceRequest, request: Re
         raise HTTPException(status_code=500, detail=f"On-chain seller remove failed: {exc}")
     if result.get("status") != 1:
         raise HTTPException(status_code=500, detail=f"Seller remove tx failed: {result.get('tx_hash')}")
+    _mark_self_service_signature_used(verification)
     return {
         "status": "removed",
         "action": "soft_deactivated",

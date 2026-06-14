@@ -211,11 +211,11 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
       </div>
       <div class="panel" style="margin-bottom:18px">
         <div class="toolbar">
-          <div><h3>My Services</h3><span class="hint">Connect your seller wallet to view and remove only your active ServiceRegistryV2/x402 services.</span></div>
+          <div><h3>My Services</h3><span class="hint">Connect your seller wallet to manage, update, or remove your active ServiceRegistryV2/x402 services.</span></div>
           <button class="ghost" id="refreshAdminServices" type="button">Refresh My Services</button>
         </div>
         <div id="sellerLifecycleWallet" style="margin:8px 0 12px;padding:10px;border:1px solid rgba(91,255,199,.18);border-radius:12px;background:rgba(91,255,199,.05);font-size:.8rem;line-height:1.45">
-          <div><strong>Seller-controlled services:</strong> connect the wallet that owns a service to remove it from active marketplace discovery.</div>
+          <div><strong>Seller-controlled services:</strong> connect the wallet that owns a service to update metadata or remove it from active marketplace discovery.</div>
           <div class="actions" style="margin-top:8px"><button class="ghost" id="openSellerLifecycleWalletBtn" type="button">Connect Seller Wallet</button><span id="sellerLifecycleWalletStatus" class="hint">No seller wallet connected</span></div>
         </div>
         <input id="adminTokenInput" class="hidden" type="password" autocomplete="off" tabindex="-1" aria-hidden="true">
@@ -233,12 +233,12 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
           <label for="adminEndpoint">Endpoint URI</label>
           <input id="adminEndpoint" type="text" style="width:100%;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:var(--text);padding:10px 12px;font:inherit;outline:none;font-size:.82rem;box-sizing:border-box">
           <div class="actions">
-            <button class="primary hidden" id="adminUpdateBtn" type="button" tabindex="-1" aria-hidden="true">Update Service</button>
+            <button class="primary" id="adminUpdateBtn" type="button">Update Service</button>
             <button class="ghost hidden" id="adminDeactivateBtn" type="button" tabindex="-1" aria-hidden="true">Deactivate</button>
             <button class="ghost hidden" id="adminReactivateBtn" type="button" tabindex="-1" aria-hidden="true">Reactivate</button>
             <button class="ghost" id="sellerRemoveBtn" type="button" style="border-color:rgba(255,93,93,.55);color:var(--red)">Remove Service</button>
           </div>
-          <div class="hint" style="margin-top:8px">Remove Service takes it out of active marketplace discovery and direct checkout. Historical on-chain proofs and registry records remain auditable.</div>
+          <div class="hint" style="margin-top:8px">Update Service changes seller-visible metadata on-chain. Remove Service takes it out of active marketplace discovery and direct checkout. Historical proofs and registry records remain auditable.</div>
         </div>
         <div id="adminLifecycleLog" style="margin-top:10px;font-size:.82rem;color:var(--muted);line-height:1.5"></div>
       </div>
@@ -970,18 +970,27 @@ function adminHeaders() {
 function currentSellerAddress() {
   return registerWallet ? String(registerWallet).toLowerCase() : "";
 }
+function normalizeEvmAddress(addr) {
+  const value = String(addr || "").trim();
+  return /^0x[a-fA-F0-9]{40}$/.test(value) ? value.toLowerCase() : "";
+}
+function serverProviderAddress() {
+  return normalizeEvmAddress((lastStatus && (lastStatus.x402_provider || lastStatus.provider)) || "");
+}
 function serviceProviderIsServerOwner(svc) {
-  const provider = String((svc && svc.provider) || "").toLowerCase();
-  const serverProvider = String((lastStatus && (lastStatus.x402_provider || lastStatus.provider)) || "").toLowerCase();
+  const provider = normalizeEvmAddress((svc && svc.provider) || "");
+  const serverProvider = serverProviderAddress();
   return Boolean(provider && serverProvider && provider === serverProvider);
 }
 function sellerOwnsService(svc) {
   const seller = currentSellerAddress();
-  if (!seller || !svc) return false;
-  const provider = String(svc.provider || "").toLowerCase();
-  if (provider && provider === seller) return true;
-  const payment = String(svc.payment_address || svc.address || "").toLowerCase();
-  return Boolean(payment && payment === seller && serviceProviderIsServerOwner(svc));
+  if (!seller || !svc || !serviceProviderIsServerOwner(svc)) return false;
+  const payment = normalizeEvmAddress(svc.payment_address || svc.address || "");
+  const provider = normalizeEvmAddress(svc.provider || "");
+  return Boolean((payment && payment === seller) || (provider && provider === seller));
+}
+function sellerCanSelfServiceManage(svc) {
+  return Boolean(svc && svc.active && serviceProviderIsServerOwner(svc) && sellerOwnsService(svc));
 }
 function renderSellerLifecycleWallet() {
   const status = el("sellerLifecycleWalletStatus");
@@ -1017,12 +1026,26 @@ function populateAdminEditor() {
   el("adminEndpoint").value = svc.endpoint_uri || svc.endpoint || "";
   el("adminDeactivateBtn").disabled = !svc.active;
   el("adminReactivateBtn").disabled = !!svc.active;
+  const serverOwnedProvider = serviceProviderIsServerOwner(svc);
+  const ownsService = sellerOwnsService(svc);
+  const canSelfServiceManage = sellerCanSelfServiceManage(svc);
+  const updateBtn = el("adminUpdateBtn");
+  if (updateBtn) {
+    updateBtn.disabled = !canSelfServiceManage;
+    updateBtn.title = !svc.active
+      ? "Service is inactive; removed services cannot be updated here"
+      : (!serverOwnedProvider
+        ? "Self-service update is available only when the on-chain provider is this server owner"
+        : (ownsService ? "Update this server-owned-provider service metadata" : "Connect this service's payment wallet (or server provider wallet) to update"));
+  }
   const removeBtn = el("sellerRemoveBtn");
   if (removeBtn) {
-    removeBtn.disabled = !svc.active || !sellerOwnsService(svc);
-    removeBtn.title = svc.active
-      ? (sellerOwnsService(svc) ? "Remove this seller-owned service from buyer discovery" : "Connect the seller provider wallet, or payment wallet only for server-owned-provider services")
-      : "Service is already inactive";
+    removeBtn.disabled = !canSelfServiceManage;
+    removeBtn.title = !svc.active
+      ? "Service is already inactive"
+      : (!serverOwnedProvider
+        ? "Self-service remove is available only when the on-chain provider is this server owner"
+        : (ownsService ? "Remove this server-owned-provider service from buyer discovery" : "Connect this service's payment wallet (or server provider wallet) to remove"));
   }
   renderSellerLifecycleWallet();
   el("adminServiceEditor").classList.remove("hidden");
@@ -1063,29 +1086,39 @@ async function loadSellerServices() {
 }
 async function updateAdminService() {
   const serviceId = Number(el("adminServiceSelect").value);
-  if (!serviceId) { lifecycleLog("Select a service first.", "bad"); return; }
+  const svc = sellerServiceById(serviceId);
+  if (!svc) { lifecycleLog("Select a service first.", "bad"); return; }
+  if (!currentSellerAddress()) { lifecycleLog("Connect the seller wallet first.", "bad"); return; }
+  if (!serviceProviderIsServerOwner(svc)) { lifecycleLog("Self-service update is available only when the on-chain provider is this server owner. External provider wallets must update directly on-chain.", "bad"); return; }
+  if (!sellerOwnsService(svc)) { lifecycleLog("Connected seller wallet is not authorized for this server-owned-provider service (connect its payment wallet or the server provider wallet).", "bad"); return; }
+  if (!svc.active) { lifecycleLog("Service is inactive; removed services cannot be updated here.", "bad"); return; }
   const btn = el("adminUpdateBtn");
   btn.disabled = true;
-  lifecycleLog("Submitting metadata update on-chain...", "warn");
   try {
-    const result = await api("/api/x402/update_v2", {
+    const update = {
+      name: el("adminName").value.trim(),
+      description: el("adminDesc").value.trim(),
+      price_seth: el("adminPrice").value.trim(),
+      payment_address: el("adminPayment").value.trim(),
+      endpoint_uri: el("adminEndpoint").value.trim(),
+    };
+    const canonicalPayment = normalizeEvmAddress(update.payment_address);
+    if (!canonicalPayment) throw new Error("Payment address is required for seller update.");
+    update.payment_address = canonicalPayment;
+    lifecycleLog("Requesting seller wallet signature for metadata update...", "warn");
+    const message = buildSellerUpdateMessage(serviceId, update);
+    const signature = await signSellerMessage(sellerWalletProvider, message, "update");
+    lifecycleLog("Submitting seller metadata update on-chain...", "warn");
+    const result = await api("/api/x402/seller/update_v2", {
       method: "POST",
-      headers: adminHeaders(),
-      body: JSON.stringify({
-        service_id: serviceId,
-        name: el("adminName").value.trim(),
-        description: el("adminDesc").value.trim(),
-        price_seth: el("adminPrice").value.trim(),
-        payment_address: el("adminPayment").value.trim(),
-        endpoint_uri: el("adminEndpoint").value.trim(),
-      }),
+      body: JSON.stringify({ service_id: serviceId, seller_address: currentSellerAddress(), message, signature, ...update }),
       timeout: 240000,
     });
     lifecycleLog(`✅ Updated service #${serviceId} — tx ${short(result.tx_hash || "", 10, 8)}`, "good");
     await loadSellerServices(); await loadX402Services(); await loadServices(); await loadStatus();
   } catch (err) {
     lifecycleLog(`❌ Update failed: ${err.message}`, "bad");
-  } finally { btn.disabled = false; }
+  } finally { populateAdminEditor(); }
 }
 async function setAdminServiceActive(active) {
   const serviceId = Number(el("adminServiceSelect").value);
@@ -1126,26 +1159,39 @@ function sellerRemoveContractAddress() {
 function sellerRemoveChainId() {
   return String((state.sellerServicesMeta && state.sellerServicesMeta.chain_id) || (lastStatus && (lastStatus.v2_chain_id || lastStatus.chain_id)) || "11155111");
 }
-function buildSellerRemoveMessage(serviceId) {
+function buildSellerActionMessage(action, serviceId, extra = {}) {
   const contractAddress = sellerRemoveContractAddress();
   if (!contractAddress) throw new Error("Registry contract address is not loaded yet; refresh status and try again.");
   return JSON.stringify({
-    action: "remove_v2",
+    action,
     service_id: Number(serviceId),
     seller_address: currentSellerAddress(),
     chain_id: sellerRemoveChainId(),
     contract_address: contractAddress,
     origin: window.location.origin,
+    ...extra,
     expires_at: Math.floor(Date.now() / 1000) + 300,
+  });
+}
+function buildSellerRemoveMessage(serviceId) {
+  return buildSellerActionMessage("remove_v2", serviceId);
+}
+function buildSellerUpdateMessage(serviceId, update) {
+  return buildSellerActionMessage("update_v2", serviceId, {
+    name: update.name,
+    description: update.description,
+    price_seth: update.price_seth,
+    payment_address: update.payment_address,
+    endpoint_uri: update.endpoint_uri,
   });
 }
 function promptManualSellerSignature(message) {
   return window.prompt(`No browser wallet signer is available for this seller address.\n\nIf you own ${currentSellerAddress()}, sign this exact JSON message with your wallet and paste the signature here:\n\n${message}`, "") || "";
 }
-async function signSellerRemoveMessage(provider, message) {
+async function signSellerMessage(provider, message, actionLabel = "action") {
   if (!provider) {
     const manualSig = promptManualSellerSignature(message).trim();
-    if (!manualSig) throw new Error("Seller signature is required for self-service remove.");
+    if (!manualSig) throw new Error(`Seller signature is required for self-service ${actionLabel}.`);
     return manualSig;
   }
   const accounts = await provider.request({ method: "eth_requestAccounts" });
@@ -1153,12 +1199,16 @@ async function signSellerRemoveMessage(provider, message) {
   if (!account || account !== currentSellerAddress()) throw new Error("Browser wallet account does not match the connected seller wallet.");
   return provider.request({ method: "personal_sign", params: [message, account] });
 }
+async function signSellerRemoveMessage(provider, message) {
+  return signSellerMessage(provider, message, "remove");
+}
 async function sellerRemoveSelectedService() {
   const serviceId = Number(el("adminServiceSelect").value);
   const svc = sellerServiceById(serviceId);
   if (!svc) { lifecycleLog("Select a service first.", "bad"); return; }
   if (!currentSellerAddress()) { lifecycleLog("Connect the seller wallet first.", "bad"); return; }
-  if (!sellerOwnsService(svc)) { lifecycleLog("Connected seller wallet is not authorized for this service (payment wallet is allowed only for server-owned-provider services).", "bad"); return; }
+  if (!serviceProviderIsServerOwner(svc)) { lifecycleLog("Self-service remove is available only when the on-chain provider is this server owner. External provider wallets must remove directly on-chain.", "bad"); return; }
+  if (!sellerOwnsService(svc)) { lifecycleLog("Connected seller wallet is not authorized for this server-owned-provider service (connect its payment wallet or the server provider wallet).", "bad"); return; }
   if (!svc.active) { lifecycleLog("Service is already inactive.", "bad"); return; }
   const warning = `Remove service #${serviceId} (${svc.name}) from buyer discovery?\n\nThis uses ServiceRegistryV2.deactivate(), so buyers will no longer see or buy it. Historical on-chain records remain.`;
   if (!window.confirm(warning)) return;
