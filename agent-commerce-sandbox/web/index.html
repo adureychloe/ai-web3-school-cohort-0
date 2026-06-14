@@ -138,28 +138,38 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
 <section id="buyerWalletSection" class="panel" style="margin:-6px 0 18px;border-color:rgba(91,255,199,.22);background:rgba(91,255,199,.045)">
   <div class="toolbar" style="margin-bottom:8px">
     <div>
-      <h2 style="margin:0 0 6px;font-size:1rem">Buyer CAW Wallet</h2>
-      <div class="hint">Global buyer payment address for Discover &amp; Buy, Find &amp; Pay, and Direct x402 checkout.</div>
+      <h2 style="margin:0 0 6px;font-size:1rem">Buyer CAW Wallet — Demo mode</h2>
+      <div class="hint">Purchases use the server-paired CAW wallet for Pact auto-pay. Approve once in CAW App; later x402 buys reuse the Pact.</div>
     </div>
     <div id="buyerWalletInfo" class="hidden" style="font-size:.82rem;overflow-wrap:anywhere">
-      ✅ CAW address: <strong id="buyerWalletDisplay" style="color:var(--green)"></strong>
+      ✅ Demo CAW selected: <strong id="buyerWalletDisplay" style="color:var(--green)"></strong>
       <button class="ghost" id="buyerDisconnectWalletBtn" type="button" style="margin-left:6px;padding:2px 8px;font-size:.7rem">disconnect</button>
     </div>
   </div>
-  <div id="buyerWalletConnect" class="actions" style="margin-top:10px">
-    <label for="buyerWalletInput" style="margin:0;color:var(--cyan)">Enter CAW wallet address</label>
-    <div style="display:flex;gap:8px;flex:1;min-width:260px">
-      <input id="buyerWalletInput" type="text" placeholder="0x..." style="flex:1;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:var(--text);padding:10px 12px;font:inherit;outline:none;font-size:.82rem;min-width:0">
-      <button class="ghost" id="buyerUseWalletBtn" type="button" style="border-radius:12px;padding:10px 14px;font-size:.82rem;white-space:nowrap">Use CAW address</button>
-    </div>
+  <div id="pairedDemoWalletRow" class="hidden" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;padding:10px 12px;border:1px solid rgba(91,255,199,.2);border-radius:12px;background:rgba(0,0,0,.16);font-size:.82rem">
+    <span class="hint">Paired demo CAW:</span>
+    <strong id="pairedDemoCawDisplay" class="mono" style="color:var(--green)"></strong>
+    <button class="ghost" id="buyerUsePairedWalletBtn" type="button" style="border-radius:12px;padding:6px 10px;font-size:.78rem;white-space:nowrap">Use paired demo CAW</button>
   </div>
-  <div class="hint" style="margin-top:8px">CAW is app-based, not a browser plugin. This buyer CAW address is separate from the seller browser wallet.</div>
+  <div class="hint" id="buyerWalletNote" style="margin-top:8px">Loading paired CAW demo status...</div>
+  <details id="buyerManualDetails" style="margin-top:10px">
+    <summary class="hint" style="cursor:pointer;color:var(--cyan)">Advanced/manual address override</summary>
+    <div id="buyerWalletConnect" class="actions" style="margin-top:10px">
+      <label for="buyerWalletInput" style="margin:0;color:var(--cyan)">Manual CAW address</label>
+      <div style="display:flex;gap:8px;flex:1;min-width:260px">
+        <input id="buyerWalletInput" type="text" placeholder="0x... (must match paired demo CAW)" style="flex:1;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:var(--text);padding:10px 12px;font:inherit;outline:none;font-size:.82rem;min-width:0">
+        <button class="ghost" id="buyerUseWalletBtn" type="button" style="border-radius:12px;padding:10px 14px;font-size:.82rem;white-space:nowrap">Set manual address</button>
+      </div>
+    </div>
+    <div class="hint" style="margin-top:8px">This demo backend can only pay from the server-paired CAW. A different address will be rejected until multi-buyer support is added.</div>
+  </details>
+  <div class="hint" style="margin-top:8px">CAW is app-based, not a browser plugin. This buyer CAW is separate from the seller browser wallet.</div>
 </section>
 <section id="servicesView">
   <div class="search-row">
     <input class="search-input" id="searchInput" type="text" placeholder="What do you need? e.g. &quot;write a Web3 research report&quot; or &quot;check wallet balance on-chain&quot;" autocomplete="off">
     <button class="search-btn" id="searchBtn" type="button">Find Service</button>
-    <button class="search-btn" id="procureBtn" type="button" disabled title="Enter CAW wallet address to use Find & Pay." style="background:linear-gradient(135deg,var(--yellow),var(--green))">Find &amp; Pay</button>
+    <button class="search-btn" id="procureBtn" type="button" disabled title="Use the paired demo CAW to use Find & Pay." style="background:linear-gradient(135deg,var(--yellow),var(--green))">Find &amp; Pay</button>
   </div>
   <div class="registry-toggle" aria-label="Registry">
     <span class="hint">Registry: <strong>ServiceRegistryV2 / x402</strong></span>
@@ -167,7 +177,7 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
   <div class="grid"><div>
     <div id="serviceCards" class="cards"><div class="empty"><span class="loader"></span>Loading V2/x402 services on Sepolia...</div></div>
   </div>
-<aside class="panel" id="paymentPanel"><h2>Discover and buy</h2><p>Choose a V2/x402 service from the marketplace or use search to auto-match. Payment uses HTTP 402 + CAW auto-pay with the global Buyer CAW Wallet above.</p>
+<aside class="panel" id="paymentPanel"><h2>Discover and buy</h2><p>Choose a V2/x402 service from the marketplace or use search to auto-match. Payment uses HTTP 402 + CAW auto-pay with the server-paired demo CAW selected above.</p>
 <div id="paymentBody" class="hidden"><p id="selectedMeta"></p><p id="balanceInfo" class="bal-chip" style="margin:0 0 12px"></p><label for="intent">Request</label><textarea id="intent" placeholder="Describe what you want the provider agent to do..."></textarea><div class="actions"><button id="payButton" class="primary" type="button" disabled>Buy via x402</button><span class="hint">First x402 buy may require CAW approval; later buys can auto-execute.</span></div></div>
 <div class="log" id="log" aria-live="polite"><div class="log-line"><span class="time">ready</span><span class="msg">Terminal log initialized.</span></div></div>
 <div id="resultPanel" class="hidden" style="margin-top:14px;border:1px solid rgba(91,255,199,.2);border-radius:16px;padding:16px;background:rgba(12,18,28,.95)"><div class="result-panel"><div class="result-icon" id="resultIcon">✅</div><div class="result-title" id="resultTitle">Payment Complete</div><div class="result-details" id="resultDetails"></div><div class="actions" style="justify-content:center"><button class="ghost" id="resetResultBtn" type="button">New Procurement</button></div></div></div></aside></div></section>
@@ -233,13 +243,13 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
     </div>
     <aside class="panel" style="position:relative">
       <h3>Direct x402 Checkout</h3>
-      <p>Use the live x402 selector with the global Buyer CAW Wallet above; no service-specific wallet re-entry is needed.</p>
+      <p>Use the live x402 selector with the global demo CAW above; no service-specific wallet re-entry is needed.</p>
       <div id="visitorWalletInfo" class="hidden" style="background:rgba(91,255,199,.08);border:1px solid rgba(91,255,199,.25);border-radius:12px;padding:10px 12px;margin-bottom:12px;font-size:.82rem">
-        <span style="color:var(--green)">✅</span> Using global Buyer CAW: <strong style="color:var(--green);overflow-wrap:anywhere" id="visitorWalletDisplay"></strong>
+        <span style="color:var(--green)">✅</span> Using paired demo CAW: <strong style="color:var(--green);overflow-wrap:anywhere" id="visitorWalletDisplay"></strong>
         <button class="ghost" id="x402DisconnectWalletBtn" type="button" style="margin-left:8px;padding:2px 8px;font-size:.7rem">disconnect</button>
       </div>
       <div id="x402WalletPrompt" class="empty" style="margin-bottom:12px;padding:12px;font-size:.82rem">
-        Set your Buyer CAW Wallet in the global panel above to use Direct x402 checkout. CAW is app-based, not a browser plugin, and is separate from the seller wallet.
+        Use the paired demo CAW in the global panel above for Direct x402 checkout. Purchases run through the server-paired CAW Pact; approve once in CAW App, then later buys reuse it.
       </div>
       <label for="x402ServiceSelect">Available x402 service</label>
       <select id="x402ServiceSelect" style="width:100%;border-radius:14px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.28);color:var(--text);padding:12px 14px;font:inherit;outline:none;margin-bottom:8px"></select>
@@ -254,7 +264,7 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
         <span class="hint">Server creates Pact → approve in CAW App → auto-delivers</span>
       </div>
 
-      <div class="log" id="x402Log" aria-live="polite"><div class="log-line"><span class="time">ready</span><span class="msg">x402 ready. Connect CAW wallet to buy.</span></div></div>
+      <div class="log" id="x402Log" aria-live="polite"><div class="log-line"><span class="time">ready</span><span class="msg">x402 ready. Use the paired demo CAW to buy.</span></div></div>
       <div id="x402ResultPanel" class="hidden" style="margin-top:14px;border:1px solid rgba(91,255,199,.2);border-radius:16px;padding:16px;background:rgba(12,18,28,.95)"><div class="result-panel"><div class="result-icon" id="x402ResultIcon">✅</div><div class="result-title" id="x402ResultTitle">Service Delivered</div><div class="result-details" id="x402ResultDetails"></div></div></div>
     </aside>
   </div>
@@ -402,7 +412,18 @@ let lastStatus = null;
 async function loadStatus() {
   try {
     lastStatus = await api("/api/status");
+    pairedCawAddress = isValidEvmAddress(lastStatus && lastStatus.paired_caw_address) ? lastStatus.paired_caw_address.trim().toLowerCase() : null;
+    if (connectedWallet && pairedCawAddress && !isPairedDemoCaw(connectedWallet)) {
+      const rejected = connectedWallet;
+      connectedWallet = null;
+      clearPersistedWallet();
+      const msg = `Saved CAW ${short(rejected, 10, 8)} does not match this server's paired demo CAW; cleared.`;
+      log(msg, "warn");
+      x402Log(msg, "warn");
+    }
     renderStatus(lastStatus);
+    renderBuyerDemoInfo();
+    renderWalletAreas();
   }
   catch (err) { el("statusbar").innerHTML = `<span class="chip warn">status error: ${escapeHtml(err.message)}</span>`; }
 }
@@ -513,10 +534,11 @@ async function doProcure() {
   if (!query) return;
   if (!connectedWallet) {
     resetLog();
-    log("Enter CAW wallet address before using Find & Pay.", "bad");
+    log("Use the paired demo CAW before using Find & Pay.", "bad");
     updateBuyerPayState();
     return;
   }
+  if (!validatePairedDemoWallet(connectedWallet)) return;
   el("procureBtn").disabled = true;
   el("searchBtn").disabled = true;
   el("procureBtn").textContent = "Processing...";
@@ -624,13 +646,18 @@ async function paySelected() {
   el("payButton").disabled = true;
   resetLog();
   if (!connectedWallet) {
-    log("Enter CAW wallet address before buying via x402.", "bad");
+    log("Use the paired demo CAW before buying via x402.", "bad");
     updateBuyerPayState();
     state.paying = false;
     return;
   }
-  log(`x402 request submitted for CAW wallet ${short(connectedWallet, 10, 8)}: preparing CAW auto-pay...`);
-  log("First purchase may wait for CAW approval; approved pacts can be reused.", "warn");
+  if (!validatePairedDemoWallet(connectedWallet)) {
+    updateBuyerPayState();
+    state.paying = false;
+    return;
+  }
+  log(`x402 request submitted with paired demo CAW ${short(connectedWallet, 10, 8)}: preparing CAW auto-pay...`);
+  log("First purchase may wait for CAW App approval; approved Pact is reused for later x402 buys.", "warn");
   startWaitingHeartbeat();
   try {
     const result = await api("/api/x402-buy", { method: "POST", body: JSON.stringify({ service_id: Number(state.selected.id), query: el("intent").value.trim(), wallet_address: connectedWallet }), timeout: 360000 });
@@ -822,10 +849,55 @@ el("searchInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { 
 el("resetResultBtn").addEventListener("click", resetResult);
 // ── Wallet Connection ──────────────────────────────
 let connectedWallet = null;
+let pairedCawAddress = null;
 const BUYER_CAW_STORAGE_KEY = "agentCommerceBuyerCAWAddress";
 
 function isValidEvmAddress(addr) {
   return /^0x[a-fA-F0-9]{40}$/.test(String(addr || "").trim());
+}
+
+function isPairedDemoCaw(addr) {
+  return Boolean(pairedCawAddress && addr && String(addr).trim().toLowerCase() === pairedCawAddress);
+}
+
+function pairedDemoRequiredMessage(addr) {
+  const paired = pairedCawAddress ? short(pairedCawAddress, 10, 8) : "the paired demo CAW shown above";
+  const got = addr ? ` You entered ${short(addr, 10, 8)}.` : "";
+  return `This demo backend only supports the server-paired CAW (${paired}) for Pact auto-pay.${got} Use \"Use paired demo CAW\" or enter that exact address.`;
+}
+
+function renderBuyerDemoInfo() {
+  if (el("buyerWalletNote")) {
+    el("buyerWalletNote").textContent = (lastStatus && lastStatus.buyer_wallet_note) || "Demo mode: purchases use the server-paired CAW for Pact auto-pay. Approve once in CAW App; later x402 buys reuse the Pact.";
+  }
+  if (el("pairedDemoWalletRow")) el("pairedDemoWalletRow").classList.toggle("hidden", !pairedCawAddress);
+  if (pairedCawAddress && el("pairedDemoCawDisplay")) el("pairedDemoCawDisplay").textContent = `${short(pairedCawAddress, 12, 10)} (${pairedCawAddress})`;
+}
+
+function setPairedDemoWallet() {
+  if (!pairedCawAddress) {
+    const msg = "Paired demo CAW address is not loaded yet. Wait for status to finish loading.";
+    log(msg, "bad");
+    x402Log(msg, "bad");
+    return;
+  }
+  connectedWallet = pairedCawAddress;
+  persistConnectedWallet();
+  if (el("buyerWalletInput")) el("buyerWalletInput").value = pairedCawAddress;
+  renderStatus(lastStatus || {});
+  renderWalletAreas();
+  const msg = `✅ Using paired demo CAW: ${short(pairedCawAddress, 10, 8)}`;
+  log(msg, "good");
+  x402Log(msg, "good");
+}
+
+function validatePairedDemoWallet(addr) {
+  if (!pairedCawAddress) return true;
+  if (isPairedDemoCaw(addr)) return true;
+  const msg = pairedDemoRequiredMessage(addr);
+  log(msg, "bad");
+  x402Log(msg, "bad");
+  return false;
 }
 
 function updateBuyerPayState() {
@@ -834,13 +906,14 @@ function updateBuyerPayState() {
   if (el("payButton")) el("payButton").disabled = state.paying || !hasService || !hasWallet;
   if (el("procureBtn")) {
     el("procureBtn").disabled = !hasWallet;
-    el("procureBtn").title = hasWallet ? `Find and Pay with CAW address ${short(connectedWallet, 10, 8)}` : "Enter CAW wallet address to use Find & Pay.";
+    el("procureBtn").title = hasWallet ? `Find and Pay with paired demo CAW ${short(connectedWallet, 10, 8)}` : "Use the paired demo CAW to use Find & Pay.";
   }
 }
 
 function renderWalletAreas() {
   const hasWallet = Boolean(connectedWallet);
   if (el("buyerWalletConnect")) el("buyerWalletConnect").classList.toggle("hidden", hasWallet);
+  if (el("buyerManualDetails") && hasWallet) el("buyerManualDetails").open = false;
   if (el("buyerWalletInfo")) el("buyerWalletInfo").classList.toggle("hidden", !hasWallet);
   if (hasWallet && el("buyerWalletDisplay")) el("buyerWalletDisplay").textContent = short(connectedWallet, 10, 8);
 
@@ -864,7 +937,11 @@ function clearPersistedWallet() {
 function restoreConnectedWallet() {
   try {
     const saved = localStorage.getItem(BUYER_CAW_STORAGE_KEY);
-    if (isValidEvmAddress(saved)) connectedWallet = saved.trim().toLowerCase();
+    if (isValidEvmAddress(saved)) {
+      const normalized = saved.trim().toLowerCase();
+      if (!pairedCawAddress || normalized === pairedCawAddress) connectedWallet = normalized;
+      else localStorage.removeItem(BUYER_CAW_STORAGE_KEY);
+    }
     else if (saved) localStorage.removeItem(BUYER_CAW_STORAGE_KEY);
   } catch (_) {}
 }
@@ -887,17 +964,19 @@ function connectCAWWallet(sourceId = "buyerWalletInput") {
     x402Log(msg, "bad");
     return;
   }
+  if (!validatePairedDemoWallet(addr)) return;
   connectedWallet = addr;
   persistConnectedWallet();
   if (el("buyerWalletInput")) el("buyerWalletInput").value = "";
   renderStatus(lastStatus || {});
   renderWalletAreas();
-  const msg = `🔗 Buyer CAW wallet address set: ${addr.slice(0,14)}...`;
+  const msg = `✅ Paired demo CAW set: ${short(addr, 10, 8)}`;
   log(msg, "good");
   x402Log(msg, "good");
 }
 
 el("buyerUseWalletBtn").addEventListener("click", () => connectCAWWallet("buyerWalletInput"));
+el("buyerUsePairedWalletBtn").addEventListener("click", setPairedDemoWallet);
 el("buyerWalletInput").addEventListener("keydown", (e) => { if (e.key === "Enter") connectCAWWallet("buyerWalletInput"); });
 el("buyerDisconnectWalletBtn").addEventListener("click", disconnectWallet);
 el("x402DisconnectWalletBtn").addEventListener("click", disconnectWallet);
@@ -909,13 +988,14 @@ async function x402Buy() {
   const serviceId = parseInt(sel.value);
   const query = el("x402Query").value.trim();
   if (!serviceId) { x402Log("Please select a service.", "bad"); return; }
-  if (!connectedWallet) { x402Log("Please enter your CAW wallet address first.", "bad"); return; }
+  if (!connectedWallet) { x402Log("Use the paired demo CAW first.", "bad"); return; }
+  if (!validatePairedDemoWallet(connectedWallet)) return;
   el("x402BuyBtn").disabled = true;
   el("x402BuyBtnText").innerHTML = '<span class="loader"></span> Buying...';
   el("x402Log").innerHTML = "";
-  x402Log(`🔗 Connected wallet: ${connectedWallet.slice(0,14)}...`, "good");
-  x402Log(`🤖 Buying service #${serviceId} via CAW auto-pay...`, "good");
-  x402Log(`⏳ Creating Pact...`, "warn");
+  x402Log(`🔗 Paired demo CAW: ${short(connectedWallet, 10, 8)}`, "good");
+  x402Log(`🤖 Buying service #${serviceId} via server-paired CAW auto-pay...`, "good");
+  x402Log(`⏳ Creating or reusing Pact...`, "warn");
   try {
     const result = await api("/api/x402-buy", {
       method: "POST",
@@ -935,7 +1015,7 @@ async function x402Buy() {
   } catch (err) {
     x402Log(`❌ Auto-pay failed: ${err.message}`, "bad");
     if (err.message.includes("pending_approval")) {
-      x402Log("⏳ Pact submitted — approve in CAW App and try again.", "warn");
+      x402Log("⏳ Pact submitted — approve once in CAW App and try again; later buys reuse it.", "warn");
     }
   } finally {
     el("x402BuyBtn").disabled = !connectedWallet || !el("x402ServiceSelect").value;

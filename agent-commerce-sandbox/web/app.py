@@ -23,6 +23,7 @@ from agent_commerce_sandbox.engine import discover_services, pay_for_service, sh
 from agent_commerce_sandbox.procurement_agent import match_and_rank, get_balance, format_price
 from agent_commerce_sandbox.chain_client import ChainClient
 from agent_commerce_sandbox.chain_client_v2 import ChainClientV2
+from agent_commerce_sandbox.caw_client import WALLET_SETH_ADDR
 
 try:
     from web3 import Web3
@@ -869,6 +870,9 @@ async def api_x402_buy(payload: X402BuyRequest) -> dict[str, Any]:
 async def api_status() -> dict[str, Any]:
     status: dict[str, Any] = {
         "wallet_healthy": False,
+        "demo_mode": "single_paired_caw",
+        "paired_caw_address": WALLET_SETH_ADDR,
+        "buyer_wallet_note": "Demo mode: purchases use the server-paired CAW for Pact auto-pay. Approve once in CAW App; later x402 buys reuse the Pact.",
         # Default fields describe the default V2/x402 registry.
         "contract_address": None,
         "service_count": 0,
