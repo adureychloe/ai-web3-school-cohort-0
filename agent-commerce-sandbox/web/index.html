@@ -185,7 +185,7 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
 <section id="x402View" class="hidden">
   <div class="panel" style="margin-bottom:18px">
     <div class="toolbar">
-      <div><h2>Seller &amp; x402 Dashboard</h2><p>Protocol controls for x402 availability, direct checkout, revenue, and on-chain service registration.</p></div>
+      <div><h2>Seller &amp; x402 Dashboard</h2><p>Seller-first tools for decentralized marketplace discovery, direct x402 checkout, revenue, and on-chain service registration.</p></div>
       <div><span id="x402RevenueChip" class="chip">revenue: --</span></div>
     </div>
   </div>
@@ -197,16 +197,15 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
       </div>
       <div class="panel" style="margin-bottom:18px">
         <div class="toolbar">
-          <div><h3>Service Lifecycle</h3><span class="hint">Update metadata, admin deactivate/reactivate, or seller self-service remove ServiceRegistryV2 services.</span></div>
-          <button class="ghost" id="refreshAdminServices" type="button">Refresh</button>
+          <div><h3>My Services</h3><span class="hint">Connect your seller wallet to view and remove only your active ServiceRegistryV2/x402 services.</span></div>
+          <button class="ghost" id="refreshAdminServices" type="button">Refresh My Services</button>
         </div>
         <div id="sellerLifecycleWallet" style="margin:8px 0 12px;padding:10px;border:1px solid rgba(91,255,199,.18);border-radius:12px;background:rgba(91,255,199,.05);font-size:.8rem;line-height:1.45">
-          <div><strong>Seller self-service:</strong> connect the seller wallet that owns the selected service, then use Remove from Discovery.</div>
+          <div><strong>Seller-controlled services:</strong> connect the wallet that owns a service to remove it from active marketplace discovery.</div>
           <div class="actions" style="margin-top:8px"><button class="ghost" id="openSellerLifecycleWalletBtn" type="button">Connect Seller Wallet</button><span id="sellerLifecycleWalletStatus" class="hint">No seller wallet connected</span></div>
         </div>
-        <label for="adminTokenInput">Admin token <span class="hint">required for admin lifecycle actions when enabled; not used for seller remove</span></label>
-        <input id="adminTokenInput" type="password" autocomplete="off" placeholder="X-Demo-Admin-Token" style="width:100%;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:var(--text);padding:10px 12px;font:inherit;outline:none;font-size:.82rem;box-sizing:border-box">
-        <label for="adminServiceSelect">Service</label>
+        <input id="adminTokenInput" class="hidden" type="password" autocomplete="off" tabindex="-1" aria-hidden="true">
+        <label for="adminServiceSelect">My active service</label>
         <select id="adminServiceSelect" style="width:100%;border-radius:14px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.28);color:var(--text);padding:12px 14px;font:inherit;outline:none"></select>
         <div id="adminServiceEditor" class="hidden" style="border-top:1px solid rgba(255,255,255,.09);padding-top:12px;margin-top:12px">
           <label for="adminName">Name</label>
@@ -220,12 +219,12 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
           <label for="adminEndpoint">Endpoint URI</label>
           <input id="adminEndpoint" type="text" style="width:100%;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:var(--text);padding:10px 12px;font:inherit;outline:none;font-size:.82rem;box-sizing:border-box">
           <div class="actions">
-            <button class="primary" id="adminUpdateBtn" type="button">Update Metadata</button>
-            <button class="ghost" id="adminDeactivateBtn" type="button">Admin Deactivate</button>
-            <button class="ghost" id="adminReactivateBtn" type="button">Admin Reactivate</button>
-            <button class="ghost" id="sellerRemoveBtn" type="button" style="border-color:rgba(255,93,93,.55);color:var(--red)">Seller Remove from Discovery</button>
+            <button class="primary hidden" id="adminUpdateBtn" type="button" tabindex="-1" aria-hidden="true">Update Service</button>
+            <button class="ghost hidden" id="adminDeactivateBtn" type="button" tabindex="-1" aria-hidden="true">Deactivate</button>
+            <button class="ghost hidden" id="adminReactivateBtn" type="button" tabindex="-1" aria-hidden="true">Reactivate</button>
+            <button class="ghost" id="sellerRemoveBtn" type="button" style="border-color:rgba(255,93,93,.55);color:var(--red)">Remove Service</button>
           </div>
-          <div class="hint" style="margin-top:8px">Seller remove uses ServiceRegistryV2.deactivate(): buyers stop discovering the service, but historical on-chain data remains.</div>
+          <div class="hint" style="margin-top:8px">Remove Service takes it out of active marketplace discovery and direct checkout. Historical on-chain proofs and registry records remain auditable.</div>
         </div>
         <div id="adminLifecycleLog" style="margin-top:10px;font-size:.82rem;color:var(--muted);line-height:1.5"></div>
       </div>
@@ -306,7 +305,7 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
 </main>
 <script>
 
-const state = { services: [], proofs: [], selected: null, paying: false, waitTimer: null, pactPollTimer: null, lastPactStatus: "", balance: null, adminServices: [], sellerServicesMeta: null };
+const state = { services: [], proofs: [], selected: null, paying: false, waitTimer: null, pactPollTimer: null, lastPactStatus: "", balance: null, sellerServices: [], sellerServicesMeta: null };
 const el = (id) => document.getElementById(id);
 const regEndpointInput = el("regEndpoint");
 if (regEndpointInput && window.location && window.location.origin) {
@@ -882,8 +881,7 @@ async function loadX402Revenue() {
   }
 }
 function adminHeaders() {
-  const token = el("adminTokenInput") ? el("adminTokenInput").value.trim() : "";
-  return token ? { "X-Demo-Admin-Token": token } : {};
+  return {};
 }
 function currentSellerAddress() {
   return registerWallet ? String(registerWallet).toLowerCase() : "";
@@ -912,21 +910,21 @@ function lifecycleLog(msg, kind = "") {
   const color = kind === "bad" ? "red" : kind === "good" ? "green" : kind === "warn" ? "yellow" : "muted";
   el("adminLifecycleLog").innerHTML = `<span style="color:var(--${color})">${escapeHtml(msg)}</span>`;
 }
-function adminServiceById(id) {
-  return state.adminServices.find((s) => Number(s.id) === Number(id));
+function sellerServiceById(id) {
+  return state.sellerServices.find((s) => Number(s.id) === Number(id));
 }
-function renderAdminServices() {
+function renderSellerServices() {
   const sel = el("adminServiceSelect");
-  if (!state.adminServices.length) {
+  if (!state.sellerServices.length) {
     sel.innerHTML = `<option value="">No services loaded</option>`;
     el("adminServiceEditor").classList.add("hidden");
     return;
   }
-  sel.innerHTML = state.adminServices.map((s) => `<option value="${escapeHtml(s.id)}">[${escapeHtml(s.id)}] ${escapeHtml(s.name)} — ${s.active ? "active" : "inactive"}</option>`).join("");
+  sel.innerHTML = state.sellerServices.map((s) => `<option value="${escapeHtml(s.id)}">[${escapeHtml(s.id)}] ${escapeHtml(s.name)} — ${s.active ? "active" : "inactive"}</option>`).join("");
   populateAdminEditor();
 }
 function populateAdminEditor() {
-  const svc = adminServiceById(el("adminServiceSelect").value);
+  const svc = sellerServiceById(el("adminServiceSelect").value);
   if (!svc) { el("adminServiceEditor").classList.add("hidden"); return; }
   el("adminName").value = svc.name || "";
   el("adminDesc").value = svc.description || "";
@@ -945,31 +943,34 @@ function populateAdminEditor() {
   renderSellerLifecycleWallet();
   el("adminServiceEditor").classList.remove("hidden");
 }
-async function loadAdminServices() {
+async function loadSellerServices() {
   const sel = el("adminServiceSelect");
   if (!sel) return;
   sel.innerHTML = `<option value="">Loading...</option>`;
   const seller = currentSellerAddress();
-  lifecycleLog(seller ? "Loading seller-owned ServiceRegistryV2 services..." : "Loading admin ServiceRegistryV2 services...", "warn");
+  if (!seller) {
+    state.sellerServices = [];
+    state.sellerServicesMeta = null;
+    sel.innerHTML = `<option value="">Connect Seller Wallet to load your services</option>`;
+    el("adminServiceEditor").classList.add("hidden");
+    renderSellerLifecycleWallet();
+    lifecycleLog("Connect your seller wallet to load your own active services. No marketplace admin role is needed.", "warn");
+    return;
+  }
+  lifecycleLog("Loading your active seller-owned ServiceRegistryV2 services...", "warn");
   try {
-    let data;
-    if (seller) {
-      data = await api(`/api/x402/seller/services_v2?seller_address=${encodeURIComponent(seller)}`);
-      state.sellerServicesMeta = { chain_id: data.chain_id, contract_address: data.contract_address };
-    } else {
-      data = await api("/api/x402/admin/services", { headers: adminHeaders() });
-      state.sellerServicesMeta = null;
-    }
+    const data = await api(`/api/x402/seller/services_v2?seller_address=${encodeURIComponent(seller)}`);
+    state.sellerServicesMeta = { chain_id: data.chain_id, contract_address: data.contract_address };
     if (data.x402_provider) {
       if (!lastStatus) lastStatus = {};
       lastStatus.x402_provider = data.x402_provider;
     }
     const services = data.services || [];
-    state.adminServices = seller ? services.filter((s) => s.active) : services;
-    renderAdminServices();
-    lifecycleLog(`Loaded ${state.adminServices.length} ${seller ? "active seller-owned " : ""}service${state.adminServices.length === 1 ? "" : "s"}.`, "good");
+    state.sellerServices = services.filter((s) => s.active);
+    renderSellerServices();
+    lifecycleLog(`Loaded ${state.sellerServices.length} active seller-owned service${state.sellerServices.length === 1 ? "" : "s"}.`, "good");
   } catch (err) {
-    state.adminServices = [];
+    state.sellerServices = [];
     state.sellerServicesMeta = null;
     sel.innerHTML = `<option value="">Service load failed</option>`;
     el("adminServiceEditor").classList.add("hidden");
@@ -997,7 +998,7 @@ async function updateAdminService() {
       timeout: 240000,
     });
     lifecycleLog(`✅ Updated service #${serviceId} — tx ${short(result.tx_hash || "", 10, 8)}`, "good");
-    await loadAdminServices(); await loadX402Services(); await loadServices(); await loadStatus();
+    await loadSellerServices(); await loadX402Services(); await loadServices(); await loadStatus();
   } catch (err) {
     lifecycleLog(`❌ Update failed: ${err.message}`, "bad");
   } finally { btn.disabled = false; }
@@ -1028,7 +1029,7 @@ async function refreshAfterLifecycleChange(changedServiceId = null) {
     el("paymentBody").classList.add("hidden");
     el("paymentPanel").querySelector("h2").textContent = "Discover and buy";
   }
-  await loadAdminServices();
+  await loadSellerServices();
   await loadX402Services();
   await loadServices();
   await loadStatus();
@@ -1070,7 +1071,7 @@ async function signSellerRemoveMessage(provider, message) {
 }
 async function sellerRemoveSelectedService() {
   const serviceId = Number(el("adminServiceSelect").value);
-  const svc = adminServiceById(serviceId);
+  const svc = sellerServiceById(serviceId);
   if (!svc) { lifecycleLog("Select a service first.", "bad"); return; }
   if (!currentSellerAddress()) { lifecycleLog("Connect the seller wallet first.", "bad"); return; }
   if (!sellerOwnsService(svc)) { lifecycleLog("Connected seller wallet is not authorized for this service (payment wallet is allowed only for server-owned-provider services).", "bad"); return; }
@@ -1108,14 +1109,14 @@ function switchTab(name) {
   el("proofsTab").classList.toggle("active", isProofs);
   el("x402Tab").classList.toggle("active", isX402);
   if (isProofs) loadProofs();
-  if (isX402) { loadX402Services(); loadAdminServices(); loadX402Revenue(); }
+  if (isX402) { loadX402Services(); loadSellerServices(); loadX402Revenue(); }
 }
 el("servicesTab").addEventListener("click", () => switchTab("services"));
 el("proofsTab").addEventListener("click", () => switchTab("proofs"));
 el("x402Tab").addEventListener("click", () => switchTab("x402"));
 el("refreshProofs").addEventListener("click", loadProofs);
 el("refreshRevenue").addEventListener("click", loadX402Revenue);
-el("refreshAdminServices").addEventListener("click", loadAdminServices);
+el("refreshAdminServices").addEventListener("click", loadSellerServices);
 el("openSellerLifecycleWalletBtn").addEventListener("click", function() { showSellerModal(); scanEIP6963Wallets(); });
 el("payButton").addEventListener("click", paySelected);
 el("searchBtn").addEventListener("click", doSearch);
@@ -1339,7 +1340,7 @@ el("adminUpdateBtn").addEventListener("click", updateAdminService);
 el("adminDeactivateBtn").addEventListener("click", () => setAdminServiceActive(false));
 el("adminReactivateBtn").addEventListener("click", () => setAdminServiceActive(true));
 el("sellerRemoveBtn").addEventListener("click", sellerRemoveSelectedService);
-el("adminTokenInput").addEventListener("keydown", (e) => { if (e.key === "Enter") loadAdminServices(); });
+el("adminTokenInput").addEventListener("keydown", (e) => { if (e.key === "Enter") loadSellerServices(); });
 
 // ── Register Service ────────────────────────────────
 let registerWallet = null;
@@ -1362,7 +1363,7 @@ function setSellerConnected(addr, provider = null) {
   el("registerWalletConnectArea").classList.add("hidden");
   renderSellerLifecycleWallet();
   populateAdminEditor();
-  if (el("adminServiceSelect")) loadAdminServices();
+  if (el("adminServiceSelect")) loadSellerServices();
   hideSellerModal();
 }
 
@@ -1526,7 +1527,7 @@ async function registerService() {
       timeout: 240000,
     });
     regLog(`✅ Registered service #${result.service_id || "?"} — tx ${short(result.tx_hash || "", 10, 8)}`, "good");
-    await loadAdminServices();
+    await loadSellerServices();
     await loadX402Services();
     await loadServices();
     await loadStatus();
