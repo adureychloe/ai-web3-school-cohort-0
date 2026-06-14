@@ -139,7 +139,7 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
   <div class="search-row">
     <input class="search-input" id="searchInput" type="text" placeholder="What do you need? e.g. &quot;write a Web3 research report&quot; or &quot;check wallet balance on-chain&quot;" autocomplete="off">
     <button class="search-btn" id="searchBtn" type="button">Find Service</button>
-    <button class="search-btn" id="procureBtn" type="button" style="background:linear-gradient(135deg,var(--yellow),var(--green))">Find & Pay</button>
+    <button class="search-btn" id="procureBtn" type="button" disabled title="Enter CAW wallet address to use Find & Pay." style="background:linear-gradient(135deg,var(--yellow),var(--green))">Find &amp; Pay</button>
   </div>
   <div class="registry-toggle" aria-label="Registry">
     <span class="hint">Registry: <strong>ServiceRegistryV2 / x402</strong></span>
@@ -148,7 +148,22 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
     <div id="serviceCards" class="cards"><div class="empty"><span class="loader"></span>Loading V2/x402 services on Sepolia...</div></div>
   </div>
 <aside class="panel" id="paymentPanel"><h2>Discover and buy</h2><p>Choose a V2/x402 service from the marketplace or use search to auto-match. Payment uses HTTP 402 + CAW auto-pay.</p>
-<div id="paymentBody" class="hidden"><p id="selectedMeta"></p><p id="balanceInfo" class="bal-chip" style="margin:0 0 12px"></p><label for="intent">Request</label><textarea id="intent" placeholder="Describe what you want the provider agent to do..."></textarea><div class="actions"><button id="payButton" class="primary" type="button">Buy via x402</button><span class="hint">First x402 buy may require CAW approval; later buys can auto-execute.</span></div></div>
+<div id="buyerWalletSection" style="margin:12px 0;padding:12px;border:1px solid rgba(91,255,199,.22);border-radius:14px;background:rgba(91,255,199,.06)">
+  <div style="font-size:.78rem;color:var(--green);font-weight:800;margin-bottom:8px">Buyer CAW Wallet</div>
+  <div id="buyerWalletInfo" class="hidden" style="margin-bottom:8px;font-size:.82rem;overflow-wrap:anywhere">
+    ✅ CAW wallet: <strong id="buyerWalletDisplay" style="color:var(--green)"></strong>
+    <button class="ghost" id="buyerDisconnectWalletBtn" type="button" style="margin-left:6px;padding:2px 8px;font-size:.7rem">disconnect</button>
+  </div>
+  <div id="buyerWalletConnect">
+    <label for="buyerWalletInput">Enter CAW wallet address</label>
+    <div style="display:flex;gap:8px;width:100%">
+      <input id="buyerWalletInput" type="text" placeholder="0x..." style="flex:1;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:var(--text);padding:10px 12px;font:inherit;outline:none;font-size:.82rem;min-width:0">
+      <button class="ghost" id="buyerUseWalletBtn" type="button" style="border-radius:12px;padding:10px 14px;font-size:.82rem;white-space:nowrap">Use CAW address</button>
+    </div>
+  </div>
+  <div class="hint" style="margin-top:6px">CAW is app-based, not a browser plugin. This buyer CAW address is separate from the seller browser wallet.</div>
+</div>
+<div id="paymentBody" class="hidden"><p id="selectedMeta"></p><p id="balanceInfo" class="bal-chip" style="margin:0 0 12px"></p><label for="intent">Request</label><textarea id="intent" placeholder="Describe what you want the provider agent to do..."></textarea><div class="actions"><button id="payButton" class="primary" type="button" disabled>Buy via x402</button><span class="hint">First x402 buy may require CAW approval; later buys can auto-execute.</span></div></div>
 <div class="log" id="log" aria-live="polite"><div class="log-line"><span class="time">ready</span><span class="msg">Terminal log initialized.</span></div></div>
 <div id="resultPanel" class="hidden" style="margin-top:14px;border:1px solid rgba(91,255,199,.2);border-radius:16px;padding:16px;background:rgba(12,18,28,.95)"><div class="result-panel"><div class="result-icon" id="resultIcon">✅</div><div class="result-title" id="resultTitle">Payment Complete</div><div class="result-details" id="resultDetails"></div><div class="actions" style="justify-content:center"><button class="ghost" id="resetResultBtn" type="button">New Procurement</button></div></div></div></aside></div></section>
 <section id="proofsView" class="hidden"><div class="panel"><div class="toolbar"><div><h2>Delivery proofs</h2><p>Records returned by ServiceRegistry on Sepolia.</p></div><button class="ghost" id="refreshProofs" type="button">Refresh proofs</button></div><div id="proofsTable" class="empty"><span class="loader"></span>Loading proofs...</div></div></section>
@@ -223,11 +238,12 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
       <label for="x402Query">Your request</label>
       <textarea id="x402Query" placeholder="e.g. ETH market analysis" style="min-height:80px"></textarea>
 
-      <!-- Wallet connect area -->
-      <div id="x402WalletConnect" class="actions" style="margin-top:6px">
+      <!-- CAW wallet address area -->
+      <div id="x402WalletConnect" class="actions" style="margin-top:6px;display:block">
+        <label for="x402WalletInput">Enter CAW wallet address</label>
         <div style="display:flex;gap:8px;width:100%">
           <input id="x402WalletInput" type="text" placeholder="Your CAW wallet address (0x...)" style="flex:1;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);color:var(--text);padding:10px 12px;font:inherit;outline:none;font-size:.82rem">
-          <button class="ghost" id="x402ConnectWalletBtn" type="button" style="border-radius:12px;padding:10px 14px;font-size:.82rem;white-space:nowrap">Connect</button>
+          <button class="ghost" id="x402ConnectWalletBtn" type="button" style="border-radius:12px;padding:10px 14px;font-size:.82rem;white-space:nowrap">Use CAW address</button>
         </div>
       </div>
 
@@ -415,6 +431,7 @@ function renderServices() {
 function selectService(id) {
   state.selected = state.services.find((svc) => Number(svc.id) === Number(id));
   renderServices();
+  updateBuyerPayState();
   if (!state.selected) return;
   const svc = state.selected;
   el("paymentPanel").querySelector("h2").textContent = svc.name;
@@ -425,6 +442,7 @@ function selectService(id) {
   el("paymentBody").classList.remove("hidden");
   resetLog();
   log(`Selected service #${svc.id}: ${svc.name}`, "good");
+  updateBuyerPayState();
 }
 async function loadServices() {
   const host = el("serviceCards");
@@ -494,6 +512,12 @@ async function doSearch() {
 async function doProcure() {
   const query = el("searchInput").value.trim();
   if (!query) return;
+  if (!connectedWallet) {
+    resetLog();
+    log("Enter CAW wallet address before using Find & Pay.", "bad");
+    updateBuyerPayState();
+    return;
+  }
   el("procureBtn").disabled = true;
   el("searchBtn").disabled = true;
   el("procureBtn").textContent = "Processing...";
@@ -501,7 +525,7 @@ async function doProcure() {
   log(`🚀 One-click procurement: ${query}`, "good");
   log("Matching best service...", "warn");
   try {
-    const result = await api("/api/procure", { method: "POST", body: JSON.stringify({ request: query }), timeout: 360000 });
+    const result = await api("/api/procure", { method: "POST", body: JSON.stringify({ request: query, wallet_address: connectedWallet }), timeout: 360000 });
 
     const ms = result.matched_service;
     if (ms) {
@@ -537,9 +561,9 @@ async function doProcure() {
   } catch (err) {
     log(`❌ Procurement failed: ${err.message}`, "bad");
   } finally {
-    el("procureBtn").disabled = false;
     el("searchBtn").disabled = false;
     el("procureBtn").textContent = "Find & Pay";
+    updateBuyerPayState();
   }
 }
 
@@ -600,11 +624,17 @@ async function paySelected() {
   state.paying = true;
   el("payButton").disabled = true;
   resetLog();
-  log("x402 request submitted: preparing CAW auto-pay...");
+  if (!connectedWallet) {
+    log("Enter CAW wallet address before buying via x402.", "bad");
+    updateBuyerPayState();
+    state.paying = false;
+    return;
+  }
+  log(`x402 request submitted for CAW wallet ${short(connectedWallet, 10, 8)}: preparing CAW auto-pay...`);
   log("First purchase may wait for CAW approval; approved pacts can be reused.", "warn");
   startWaitingHeartbeat();
   try {
-    const result = await api("/api/x402-buy", { method: "POST", body: JSON.stringify({ service_id: Number(state.selected.id), query: el("intent").value.trim() }), timeout: 360000 });
+    const result = await api("/api/x402-buy", { method: "POST", body: JSON.stringify({ service_id: Number(state.selected.id), query: el("intent").value.trim(), wallet_address: connectedWallet }), timeout: 360000 });
     stopTimers();
     const pactId = extractPactId(result);
     if (pactId) {
@@ -625,7 +655,7 @@ async function paySelected() {
     log(`Payment failed: ${err.message}`, "bad");
   } finally {
     state.paying = false;
-    el("payButton").disabled = false;
+    updateBuyerPayState();
   }
 }
 function renderContent(content) {
@@ -718,7 +748,7 @@ async function loadX402Services() {
     if (!services.length) {
       host.innerHTML = `<div class="empty">No active x402 services available for direct checkout.</div>`;
       sel.innerHTML = `<option value="">No x402 services available</option>`;
-      el("x402BuyBtn").disabled = true;
+      renderWalletAreas();
       return;
     }
 
@@ -742,11 +772,11 @@ async function loadX402Services() {
     </div>`;
     sel.disabled = false;
     sel.innerHTML = services.map((s) => `<option value="${escapeHtml(s.id)}">[${s.id}] ${escapeHtml(s.name)} — ${escapeHtml(s.price)} ${escapeHtml(s.token)}</option>`).join("");
-    el("x402BuyBtn").disabled = !connectedWallet;
+    renderWalletAreas();
   } catch (err) {
     host.innerHTML = `<div class="empty">x402 availability failed: ${escapeHtml(err.message)}</div>`;
     sel.innerHTML = `<option value="">Failed to load services</option>`;
-    el("x402BuyBtn").disabled = true;
+    renderWalletAreas();
   }
 }
 async function loadX402Revenue() {
@@ -794,35 +824,66 @@ el("resetResultBtn").addEventListener("click", resetResult);
 // ── Wallet Connection ──────────────────────────────
 let connectedWallet = null;
 
+function isValidEvmAddress(addr) {
+  return /^0x[a-fA-F0-9]{40}$/.test(String(addr || "").trim());
+}
+
+function updateBuyerPayState() {
+  const hasWallet = Boolean(connectedWallet);
+  const hasService = Boolean(state.selected);
+  if (el("payButton")) el("payButton").disabled = state.paying || !hasService || !hasWallet;
+  if (el("procureBtn")) {
+    el("procureBtn").disabled = !hasWallet;
+    el("procureBtn").title = hasWallet ? `Find and Pay with CAW address ${short(connectedWallet, 10, 8)}` : "Enter CAW wallet address to use Find & Pay.";
+  }
+}
+
+function renderWalletAreas() {
+  const hasWallet = Boolean(connectedWallet);
+  if (el("buyerWalletConnect")) el("buyerWalletConnect").classList.toggle("hidden", hasWallet);
+  if (el("buyerWalletInfo")) el("buyerWalletInfo").classList.toggle("hidden", !hasWallet);
+  if (hasWallet && el("buyerWalletDisplay")) el("buyerWalletDisplay").textContent = short(connectedWallet, 10, 8);
+
+  if (el("x402WalletConnect")) el("x402WalletConnect").classList.toggle("hidden", hasWallet);
+  if (el("visitorWalletInfo")) el("visitorWalletInfo").classList.toggle("hidden", !hasWallet);
+  if (hasWallet && el("visitorWalletDisplay")) el("visitorWalletDisplay").textContent = short(connectedWallet, 10, 8);
+
+  if (el("x402BuyBtn")) el("x402BuyBtn").disabled = !hasWallet || !el("x402ServiceSelect").value;
+  updateBuyerPayState();
+}
+
 function disconnectWallet() {
   connectedWallet = null;
   renderStatus(lastStatus || {});
-  el("x402WalletConnect").classList.remove("hidden");
-  el("visitorWalletInfo").classList.add("hidden");
-  el("x402BuyBtn").disabled = true;
-  x402Log("Wallet disconnected.", "warn");
+  renderWalletAreas();
+  x402Log("CAW wallet address disconnected.", "warn");
 }
 
-// Connect CAW wallet by address
-function connectCAWWallet() {
-  const addr = el("x402WalletInput").value.trim().toLowerCase();
-  if (!addr || !addr.startsWith("0x") || addr.length < 40) {
-    x402Log("Please enter a valid Ethereum address starting with 0x.", "bad");
+// Use CAW wallet by address (CAW is not a browser plugin)
+function connectCAWWallet(sourceId = "x402WalletInput") {
+  const input = el(sourceId);
+  const addr = input ? input.value.trim().toLowerCase() : "";
+  if (!isValidEvmAddress(addr)) {
+    const msg = "Please enter a valid CAW EVM address starting with 0x.";
+    if (sourceId === "buyerWalletInput") log(msg, "bad"); else x402Log(msg, "bad");
     return;
   }
   connectedWallet = addr;
-  el("x402WalletInput").value = "";
-  el("x402WalletConnect").classList.add("hidden");
-  el("visitorWalletDisplay").textContent = `${short(addr, 10, 8)}`;
-  el("visitorWalletInfo").classList.remove("hidden");
-  el("x402BuyBtn").disabled = !el("x402ServiceSelect").value;
+  if (el("x402WalletInput")) el("x402WalletInput").value = "";
+  if (el("buyerWalletInput")) el("buyerWalletInput").value = "";
   renderStatus(lastStatus || {});
-  x402Log(`🔗 CAW wallet connected: ${addr.slice(0,14)}...`, "good");
+  renderWalletAreas();
+  const msg = `🔗 CAW wallet address set: ${addr.slice(0,14)}...`;
+  if (sourceId === "buyerWalletInput") log(msg, "good"); else x402Log(msg, "good");
 }
 
-el("x402ConnectWalletBtn").addEventListener("click", connectCAWWallet);
-el("x402WalletInput").addEventListener("keydown", (e) => { if (e.key === "Enter") connectCAWWallet(); });
+el("buyerUseWalletBtn").addEventListener("click", () => connectCAWWallet("buyerWalletInput"));
+el("buyerWalletInput").addEventListener("keydown", (e) => { if (e.key === "Enter") connectCAWWallet("buyerWalletInput"); });
+el("buyerDisconnectWalletBtn").addEventListener("click", disconnectWallet);
+el("x402ConnectWalletBtn").addEventListener("click", () => connectCAWWallet("x402WalletInput"));
+el("x402WalletInput").addEventListener("keydown", (e) => { if (e.key === "Enter") connectCAWWallet("x402WalletInput"); });
 el("x402DisconnectWalletBtn").addEventListener("click", disconnectWallet);
+el("x402ServiceSelect").addEventListener("change", renderWalletAreas);
 
 // ── Updated x402 Buy Flow (CAW Pact auto-pay) ─────────
 async function x402Buy() {
@@ -830,7 +891,7 @@ async function x402Buy() {
   const serviceId = parseInt(sel.value);
   const query = el("x402Query").value.trim();
   if (!serviceId) { x402Log("Please select a service.", "bad"); return; }
-  if (!connectedWallet) { x402Log("Please connect your CAW wallet first.", "bad"); return; }
+  if (!connectedWallet) { x402Log("Please enter your CAW wallet address first.", "bad"); return; }
   el("x402BuyBtn").disabled = true;
   el("x402BuyBtnText").innerHTML = '<span class="loader"></span> Buying...';
   el("x402Log").innerHTML = "";

@@ -55,6 +55,7 @@ class PayRequest(BaseModel):
 
 class MatchRequest(BaseModel):
     request: str = Field(..., min_length=1, max_length=1000)
+    wallet_address: Optional[str] = None
 
 
 def json_safe(value: Any) -> Any:
@@ -393,7 +394,7 @@ async def api_procure(payload: MatchRequest) -> dict[str, Any]:
 
         ranked, match_source = match_and_rank(payload.request, active)
         best = ranked[0][1]
-        result = await api_x402_buy(X402BuyRequest(service_id=best["id"], query=payload.request))
+        result = await api_x402_buy(X402BuyRequest(service_id=best["id"], query=payload.request, wallet_address=payload.wallet_address))
         return json_safe({
             **result,
             "matched_service": {
