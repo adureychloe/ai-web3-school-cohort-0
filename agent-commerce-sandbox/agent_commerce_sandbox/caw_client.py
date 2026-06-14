@@ -71,6 +71,11 @@ def _run_caw(*args: str, timeout: int = 60) -> dict:
 class CawClient:
     """Wrapper around the `caw` CLI for Cobo Agentic Wallet operations."""
 
+    @property
+    def wallet_address(self) -> str:
+        """Return this server's paired CAW SETH wallet address."""
+        return WALLET_SETH_ADDR
+
     # ── Pacts ──────────────────────────────────────────────
 
     def submit_pact(
