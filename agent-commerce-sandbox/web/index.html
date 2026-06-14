@@ -1021,6 +1021,7 @@ async function registerService() {
     });
     regLog(`✅ Registered service #${result.service_id || "?"} — tx ${short(result.tx_hash || "", 10, 8)}`, "good");
     await loadX402Services();
+    await loadServices();
     await loadStatus();
   } catch (err) {
     regLog(`❌ Registration failed: ${err.message}`, "bad");
