@@ -7,6 +7,8 @@ Usage:
     python run.py pay <service_id>      Pay for a service (prompts for intent)
     python run.py pay <service_id> "..." Pay for a service with intent text
     python run.py proof [service_id]    Show delivery proofs (optionally by service)
+    python run.py buyer-agent "request" [budget_seth]
+                                      Match services via local Buyer Agent API
     python run.py status                Show wallet and contract status
     python run.py serve [port]          Start x402 service (sell services)
     python run.py request [id] ["q"]    Buy via x402 (auto-pay with CAW)
@@ -39,6 +41,7 @@ def print_usage():
     print("  proof [id]            Show delivery proofs")
     print("  status                Show wallet + contract info")
     print('  procure ["request"]   Natural language service procurement')
+    print('  buyer-agent "request" [budget_seth]  Match via local Buyer Agent API')
     print("  serve                 Start x402 service (sell services)")
     print('  request <id> ["q"]    Buy via x402 (auto-pay with CAW)')
     print("  revenue               Show x402 server earnings")
@@ -123,6 +126,46 @@ def cmd_procure(request_text: str = ""):
     procure(request_text)
 
 
+def cmd_buyer_agent(request_text: str = "", budget_seth: str = ""):
+    if not request_text:
+        try:
+            request_text = input("  What do you need? > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            request_text = ""
+    if not request_text:
+        print("  Cancelled.")
+        return
+
+    import json
+    import urllib.error
+    import urllib.request
+
+    url = os.environ.get("AGENT_COMMERCE_API", "http://127.0.0.1:8080")
+    payload = {"request": request_text, "auto_pay": False}
+    if budget_seth:
+        payload["budget_seth"] = budget_seth
+
+    req = urllib.request.Request(
+        f"{url.rstrip('/')}/api/agent/buyer/procure",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        resp = urllib.request.urlopen(req, timeout=20)
+        body = json.loads(resp.read())
+    except urllib.error.URLError as exc:
+        print("  Buyer Agent API is not reachable.")
+        print("  Start it with: python3 -m uvicorn web.app:app --host 0.0.0.0 --port 8080")
+        print(f"  Error: {exc}")
+        return
+
+    decision = body.get("decision", {})
+    print(f"  Status: {body.get('status')}")
+    print(f"  Selected: [{decision.get('service_id')}] {decision.get('service_name')}")
+    print(f"  Score: {decision.get('score')}  Source: {body.get('match_source')}")
+
+
 def main():
     print(BANNER)
 
@@ -157,6 +200,11 @@ def main():
     elif cmd == "procure":
         request = args[1] if len(args) >= 2 else ""
         cmd_procure(request)
+
+    elif cmd == "buyer-agent":
+        request = args[1] if len(args) >= 2 else ""
+        budget_seth = args[2] if len(args) >= 3 else ""
+        cmd_buyer_agent(request, budget_seth)
 
     elif cmd == "serve":
         from agent_commerce_sandbox.x402_server import serve as x402_serve

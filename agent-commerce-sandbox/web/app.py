@@ -428,6 +428,248 @@ class X402BuyRequest(BaseModel):
     service_id: int = 4
     query: str = ""
     wallet_address: Optional[str] = None
+    max_price_wei: Optional[int] = Field(default=None, ge=0)
+
+
+class BuyerAgentProcureRequest(BaseModel):
+    request: str = Field(..., min_length=1, max_length=1000)
+    budget_seth: Optional[Decimal] = Field(default=None, ge=Decimal("0"))
+    wallet_address: Optional[str] = None
+    auto_pay: bool = False
+    max_candidates: int = Field(default=5, ge=1, le=50)
+
+
+_WEI_PER_SETH = Decimal(10) ** 18
+
+
+def _format_decimal_plain(value: Decimal) -> str:
+    """Return a deterministic, non-scientific decimal string."""
+    text = format(value, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _service_price_wei(service: dict[str, Any]) -> Optional[Decimal]:
+    """Read a service priceWei value as Decimal for exact budget filtering."""
+    try:
+        price = service.get("priceWei")
+        if price is None:
+            return None
+        return Decimal(str(price))
+    except Exception:
+        return None
+
+
+def _wei_value_to_int(value: Any, field_name: str) -> int:
+    """Parse an integer wei value from API/chain data without losing precision."""
+    try:
+        wei = Decimal(str(value).strip())
+    except Exception as exc:
+        raise ValueError(f"Invalid {field_name}: expected an integer wei amount") from exc
+    if not wei.is_finite() or wei < 0:
+        raise ValueError(f"Invalid {field_name}: expected a non-negative wei amount")
+    integral = wei.to_integral_value()
+    if wei != integral:
+        raise ValueError(f"Invalid {field_name}: wei amount must be an integer")
+    return int(integral)
+
+
+def _seth_amount_to_wei(value: Any, field_name: str) -> int:
+    """Convert a SETH decimal amount string to integer wei exactly."""
+    try:
+        amount = Decimal(str(value).strip())
+    except Exception as exc:
+        raise ValueError(f"Invalid {field_name}: expected a SETH decimal amount") from exc
+    if not amount.is_finite() or amount < 0:
+        raise ValueError(f"Invalid {field_name}: expected a non-negative SETH amount")
+    wei = amount * _WEI_PER_SETH
+    integral = wei.to_integral_value()
+    if wei != integral:
+        raise ValueError(f"Invalid {field_name}: SETH amount has more than 18 decimal places")
+    return int(integral)
+
+
+def _x402_service_price_wei(service: dict[str, Any]) -> Optional[int]:
+    """Resolve a service price as wei, accepting V2 wei or X402 SETH fields."""
+    for key in ("priceWei", "price_wei"):
+        if service.get(key) not in (None, ""):
+            return _wei_value_to_int(service.get(key), f"service.{key}")
+    if service.get("price") not in (None, ""):
+        return _seth_amount_to_wei(service.get("price"), "service.price")
+    return None
+
+
+def _resolve_x402_payment(payment: dict[str, Any], service: dict[str, Any]) -> dict[str, Any]:
+    """Normalize current x402 payment details for transfer and budget checks.
+
+    The x402 seller endpoint returns ``payment.amount`` as a SETH decimal string,
+    while the registry stores prices as wei. Normalize both representations to
+    integer wei for comparison, then format a canonical SETH decimal for CAW.
+    """
+    payment = payment if isinstance(payment, dict) else {}
+    if payment.get("amount") not in (None, ""):
+        amount_wei = _seth_amount_to_wei(payment.get("amount"), "payment.amount")
+    else:
+        amount_wei = _x402_service_price_wei(service)
+        if amount_wei is None:
+            raise ValueError("Invalid x402 payment: missing payment.amount and service price")
+
+    amount_seth = _format_decimal_plain(Decimal(amount_wei) / _WEI_PER_SETH)
+    return {
+        "amount_wei": amount_wei,
+        "amount_seth": amount_seth,
+        "token_id": payment.get("token_id") or service.get("token") or "SETH",
+        "chain_id": payment.get("chain_id") or service.get("chain") or "SETH",
+        "address": payment.get("address") or service.get("address") or "",
+    }
+
+
+def _is_active_x402_service(service: dict[str, Any]) -> bool:
+    """Return True for active V2/x402 services."""
+    active = service.get("active", True)
+    if isinstance(active, str):
+        active_ok = active.strip().lower() not in {"0", "false", "no", "off"}
+    else:
+        active_ok = bool(active)
+    protocol = str(service.get("protocol") or "x402").lower()
+    return active_ok and protocol == "x402"
+
+
+def _buyer_agent_candidate(service: dict[str, Any], score: int) -> dict[str, Any]:
+    """Build the deterministic candidate object returned by the Buyer Agent."""
+    price_wei = _service_price_wei(service)
+    candidate = {
+        "id": service.get("id"),
+        "name": service.get("name"),
+        "description": service.get("description", ""),
+        "priceWei": service.get("priceWei"),
+        "price_seth": _format_decimal_plain(price_wei / _WEI_PER_SETH) if price_wei is not None else None,
+        "price_eth": _format_decimal_plain(price_wei / _WEI_PER_SETH) if price_wei is not None else None,
+        "score": score,
+        "match_score": score,
+        "protocol": service.get("protocol", "x402"),
+        "paymentAddress": service.get("paymentAddress"),
+        "chainId": service.get("chainId"),
+        "tokenId": service.get("tokenId"),
+        "endpointURI": service.get("endpointURI"),
+    }
+    # Preserve common V2 seller metadata when present without exposing secrets.
+    for key in ("sellerPaymentAddress", "sellerProvider", "provider", "buyerPairedCawAddress"):
+        if key in service:
+            candidate[key] = service.get(key)
+    return json_safe(candidate)
+
+
+def _buyer_agent_decision_reason(payload: BuyerAgentProcureRequest, candidate_count: int) -> str:
+    """Explain the deterministic Buyer Agent decision in one sentence."""
+    if payload.budget_seth is None:
+        return (
+            f"Selected the highest-ranked active x402 service from {candidate_count} "
+            "candidate(s); no budget limit was provided."
+        )
+    return (
+        f"Selected the highest-ranked active x402 service within the "
+        f"{_format_decimal_plain(payload.budget_seth)} SETH budget from {candidate_count} candidate(s)."
+    )
+
+
+@app.post("/api/agent/buyer/procure")
+async def api_agent_buyer_procure(payload: BuyerAgentProcureRequest) -> dict[str, Any]:
+    """Buyer Agent: discover, budget-filter, rank, and optionally auto-pay."""
+    try:
+        services = await _list_v2_services()
+        active_x402 = [s for s in services if _is_active_x402_service(s)]
+
+        budget_wei: Optional[Decimal] = None
+        if payload.budget_seth is not None:
+            budget_wei = payload.budget_seth * _WEI_PER_SETH
+            eligible = [
+                s for s in active_x402
+                if (price_wei := _service_price_wei(s)) is not None and price_wei <= budget_wei
+            ]
+        else:
+            eligible = active_x402
+
+        if not eligible:
+            raise HTTPException(status_code=404, detail="No active x402 services match the requested budget")
+
+        ranked, match_source = match_and_rank(payload.request, eligible)
+        if not ranked:
+            raise HTTPException(status_code=404, detail="No active x402 services matched the request")
+
+        selected_score, selected_service = ranked[0]
+        candidates = [
+            _buyer_agent_candidate(service, int(score))
+            for score, service in ranked[:payload.max_candidates]
+        ]
+        selected_candidate = _buyer_agent_candidate(selected_service, int(selected_score))
+        balance = await to_thread(get_balance)
+
+        requested_seth = (
+            _format_decimal_plain(payload.budget_seth)
+            if payload.budget_seth is not None
+            else None
+        )
+        decision = {
+            "service_id": selected_service.get("id"),
+            "service_name": selected_service.get("name"),
+            "score": int(selected_score),
+            "reason": _buyer_agent_decision_reason(payload, len(candidates)),
+            "selected_service": selected_candidate,
+        }
+        budget = {
+            "requested_seth": requested_seth,
+            "requested_wei": _format_decimal_plain(budget_wei) if budget_wei is not None else None,
+            "wallet_address": payload.wallet_address,
+            "balance": json_safe(balance),
+        }
+        timeline = [
+            {"step": "list_services", "status": "ok", "count": len(services)},
+            {"step": "filter", "status": "ok", "count": len(eligible), "budget_seth": requested_seth},
+            {"step": "match", "status": "ok", "source": match_source},
+            {"step": "select", "status": "ok", "service_id": selected_service.get("id")},
+        ]
+
+        matched_response = {
+            "agent": "buyer",
+            "status": "matched",
+            "decision": decision,
+            "candidates": candidates,
+            "budget": budget,
+            "balance": json_safe(balance),
+            "match_source": match_source,
+            "timeline": timeline,
+        }
+
+        if not payload.auto_pay:
+            return json_safe(matched_response)
+
+        purchase_result = await api_x402_buy(X402BuyRequest(
+            service_id=int(selected_service.get("id")),
+            query=payload.request,
+            wallet_address=payload.wallet_address,
+            max_price_wei=int(budget_wei) if budget_wei is not None else None,
+        ))
+        merged = {
+            **matched_response,
+            **json_safe(purchase_result),
+            "agent": "buyer",
+            "decision": decision,
+            "candidates": candidates,
+            "budget": budget,
+            "balance": json_safe(balance),
+            "match_source": match_source,
+        }
+        if isinstance(purchase_result, dict) and "timeline" in purchase_result:
+            merged["timeline"] = json_safe(purchase_result["timeline"])
+        else:
+            merged["timeline"] = [*timeline, {"step": "x402_buy", "status": merged.get("status", "ok")}]
+        return json_safe(merged)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 class X402ClaimRequest(BaseModel):
@@ -763,6 +1005,26 @@ def _api_x402_buy_blocking(payload: X402BuyRequest) -> dict[str, Any]:
                 raise
             payment = _json.loads(e.read()).get("payment", {})
 
+        try:
+            resolved_payment = _resolve_x402_payment(payment, svc)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        payment = {
+            **payment,
+            "amount": resolved_payment["amount_seth"],
+            "token_id": resolved_payment["token_id"],
+            "chain_id": resolved_payment["chain_id"],
+            "address": resolved_payment["address"],
+        }
+        if payload.max_price_wei is not None and resolved_payment["amount_wei"] > payload.max_price_wei:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"x402 payment amount {resolved_payment['amount_wei']} wei exceeds "
+                    f"max_price_wei {payload.max_price_wei}; CAW transfer not submitted"
+                ),
+            )
+
         # Step 2: Reuse or create Pact
         pact_id = None
         needs_approval = False
@@ -857,7 +1119,7 @@ def _api_x402_buy_blocking(payload: X402BuyRequest) -> dict[str, Any]:
         tx_result = caw.execute_transfer(
             pact_id=pact_id,
             dst_address=payment.get("address", ""),
-            amount=payment.get("amount", svc["price"]),
+            amount=resolved_payment["amount_seth"],
             token_id=payment.get("token_id", svc["token"]),
             chain_id=payment.get("chain_id", svc["chain"]),
             description=f"x402 auto-pay for {svc['name']}: {payload.query[:80]}",
@@ -885,7 +1147,7 @@ def _api_x402_buy_blocking(payload: X402BuyRequest) -> dict[str, Any]:
         return json_safe({
             "status": "completed",
             "service": svc["name"],
-            "amount_paid": payment.get("amount", ""),
+            "amount_paid": resolved_payment["amount_seth"],
             "tx_hash": tx_hash,
             "reused_pact": not needs_approval and _x402_pact_id is not None,
             "content": result.get("content", ""),

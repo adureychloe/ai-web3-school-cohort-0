@@ -71,7 +71,7 @@
 2. 输入需求，点击 **Find Service** 或 **Find & Pay**。
 3. 系统从 `ServiceRegistryV2` 拉取服务并做匹配。
 4. 购买时调用 x402 endpoint，服务端返回 `402 payment_required`。
-5. 后端通过 CAW 创建/复用 Pact，用户在 CAW App 批准后自动转账。
+5. 后端会在 CAW 转账前用当前 x402 payment amount 重新校验最大预算，然后通过 CAW 创建/复用 Pact，用户在 CAW App 批准后自动转账。
 6. 服务返回交付内容，支付/交付证明写入链上。
 
 ### 3. Seller 管理服务
@@ -144,6 +144,9 @@ python run.py discover
 # 自然语言采购
 python run.py procure "帮我写一份 ETH 市场分析报告"
 
+# Buyer Agent API 匹配（需先启动 Web API，可选预算 SETH）
+python run.py buyer-agent "Find market analysis for an AI commerce launch" 3
+
 # 指定服务 ID 支付
 python run.py pay 1 "帮我做 Web3 市场研究"
 
@@ -170,9 +173,18 @@ python run.py request 1 "生成一份研究摘要"
 | `GET` | `/api/services/all` | V2 服务，可选包含 legacy |
 | `POST` | `/api/procure/match` | 根据需求匹配服务 |
 | `POST` | `/api/procure` | 匹配并购买 |
+| `POST` | `/api/agent/buyer/procure` | Buyer Agent：按预算过滤 V2/x402 服务、排序，`auto_pay=true` 时会在 CAW transfer 前重新校验当前 x402 价格不超过最大预算 |
 | `POST` | `/api/x402-buy` | 指定服务直接走 x402/CAW auto-pay |
 | `GET` | `/api/proofs` | V2 交付证明 |
 | `GET` | `/api/status` | 系统状态 |
+
+Buyer Agent example:
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/agent/buyer/procure \
+  -H 'Content-Type: application/json' \
+  -d '{"request":"Find market analysis","budget_seth":"3","auto_pay":false}'
+```
 
 ### x402 Seller
 
