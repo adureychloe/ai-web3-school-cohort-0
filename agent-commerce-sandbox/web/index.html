@@ -131,9 +131,9 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
   <div id="statusbar" class="statusbar"><span class="chip warn"><span class="loader"></span>checking status</span></div>
 </header>
 <nav class="tabs" aria-label="Sections">
-  <button class="tab active" id="servicesTab" type="button">Services</button>
+  <button class="tab active" id="servicesTab" type="button">Discover &amp; Buy</button>
   <button class="tab" id="proofsTab" type="button">Proofs</button>
-  <button class="tab" id="x402Tab" type="button">x402 Market</button>
+  <button class="tab" id="x402Tab" type="button">Seller &amp; x402</button>
 </nav>
 <section id="servicesView">
   <div class="search-row">
@@ -147,7 +147,7 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
   <div class="grid"><div>
     <div id="serviceCards" class="cards"><div class="empty"><span class="loader"></span>Loading V2/x402 services on Sepolia...</div></div>
   </div>
-<aside class="panel" id="paymentPanel"><h2>Select a V2/x402 service</h2><p>Choose a V2/x402 card or use the search bar above to auto-match a service. The Pay button buys through HTTP 402 + CAW auto-pay.</p>
+<aside class="panel" id="paymentPanel"><h2>Discover and buy</h2><p>Choose a V2/x402 service from the marketplace or use search to auto-match. Payment uses HTTP 402 + CAW auto-pay.</p>
 <div id="paymentBody" class="hidden"><p id="selectedMeta"></p><p id="balanceInfo" class="bal-chip" style="margin:0 0 12px"></p><label for="intent">Request</label><textarea id="intent" placeholder="Describe what you want the provider agent to do..."></textarea><div class="actions"><button id="payButton" class="primary" type="button">Buy via x402</button><span class="hint">First x402 buy may require CAW approval; later buys can auto-execute.</span></div></div>
 <div class="log" id="log" aria-live="polite"><div class="log-line"><span class="time">ready</span><span class="msg">Terminal log initialized.</span></div></div>
 <div id="resultPanel" class="hidden" style="margin-top:14px;border:1px solid rgba(91,255,199,.2);border-radius:16px;padding:16px;background:rgba(12,18,28,.95)"><div class="result-panel"><div class="result-icon" id="resultIcon">✅</div><div class="result-title" id="resultTitle">Payment Complete</div><div class="result-details" id="resultDetails"></div><div class="actions" style="justify-content:center"><button class="ghost" id="resetResultBtn" type="button">New Procurement</button></div></div></div></aside></div></section>
@@ -155,23 +155,23 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
 <section id="x402View" class="hidden">
   <div class="panel" style="margin-bottom:18px">
     <div class="toolbar">
-      <div><h2>x402 Market — Agent Commerce</h2><p>Hermes sells services. Buy via HTTP 402 + CAW auto-pay.</p></div>
+      <div><h2>Seller &amp; x402 Dashboard</h2><p>Protocol controls for x402 availability, direct checkout, revenue, and on-chain service registration.</p></div>
       <div><span id="x402RevenueChip" class="chip">revenue: --</span></div>
     </div>
   </div>
   <div class="grid">
     <div>
       <div class="panel" style="margin-bottom:18px">
-        <div class="toolbar"><div><h3>🛒 Services for Sale</h3></div></div>
-        <div id="x402ServiceCards" class="cards"><div class="empty"><span class="loader"></span>Loading x402 services...</div></div>
+        <div class="toolbar"><div><h3>Available via x402</h3><span class="hint">Concise live summary; use the direct checkout selector on the right.</span></div></div>
+        <div id="x402ServiceCards"><div class="empty"><span class="loader"></span>Loading x402 availability...</div></div>
       </div>
       <div class="panel">
-        <div class="toolbar"><div><h3>📊 Revenue</h3></div><button class="ghost" id="refreshRevenue" type="button">Refresh</button></div>
+        <div class="toolbar"><div><h3>Revenue</h3></div><button class="ghost" id="refreshRevenue" type="button">Refresh</button></div>
         <div id="x402RevenuePanel"><p class="empty">No revenue data yet.</p></div>
       </div>
       <!-- ── Register Service ── -->
       <div class="panel" style="margin-top:18px">
-        <div class="toolbar"><div><h3>🛒 Register Service</h3><span class="hint">Sell your own service</span></div>
+        <div class="toolbar"><div><h3>Register Service</h3><span class="hint">Publish a seller service to ServiceRegistryV2</span></div>
           <button class="ghost" id="toggleRegisterForm" type="button">＋ New</button>
         </div>
         <div id="registerForm" class="hidden" style="border-top:1px solid rgba(255,255,255,.09);padding-top:14px">
@@ -212,13 +212,13 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
       </div>
     </div>
     <aside class="panel" style="position:relative">
-      <h3>🤖 Buy via CAW Auto-Pay</h3>
-      <p>Connect your CAW wallet → one-click buy → approve in CAW App → content auto-delivered.</p>
+      <h3>Direct x402 Checkout</h3>
+      <p>Use the live x402 selector for a focused checkout without duplicating the buyer marketplace cards.</p>
       <div id="visitorWalletInfo" class="hidden" style="background:rgba(91,255,199,.08);border:1px solid rgba(91,255,199,.25);border-radius:12px;padding:10px 12px;margin-bottom:12px;font-size:.82rem">
         <span style="color:var(--green)">✅</span> Wallet: <strong style="color:var(--green);overflow-wrap:anywhere" id="visitorWalletDisplay"></strong>
         <button class="ghost" id="x402DisconnectWalletBtn" type="button" style="margin-left:8px;padding:2px 8px;font-size:.7rem">disconnect</button>
       </div>
-      <label for="x402ServiceSelect">Service</label>
+      <label for="x402ServiceSelect">Available x402 service</label>
       <select id="x402ServiceSelect" style="width:100%;border-radius:14px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.28);color:var(--text);padding:12px 14px;font:inherit;outline:none;margin-bottom:8px"></select>
       <label for="x402Query">Your request</label>
       <textarea id="x402Query" placeholder="e.g. ETH market analysis" style="min-height:80px"></textarea>
@@ -708,21 +708,45 @@ function x402Log(msg, kind = "") {
 }
 async function loadX402Services() {
   const host = el("x402ServiceCards");
-  host.innerHTML = `<div class="empty"><span class="loader"></span>Loading x402 services...</div>`;
+  host.innerHTML = `<div class="empty"><span class="loader"></span>Loading x402 availability...</div>`;
   const sel = el("x402ServiceSelect");
   sel.innerHTML = `<option value="">Loading...</option>`;
+  sel.disabled = true;
   try {
     const data = await api("/api/x402/services");
     const services = data.services || [];
-    if (!services.length) { host.innerHTML = `<div class="empty">No x402 services available.</div>`; return; }
-    host.innerHTML = services.map((s) => `<article class="card">
-      <div class="card-top"><span>[${escapeHtml(s.id)}] ${escapeHtml(s.name)}</span><span>${escapeHtml(s.token)}</span></div>
-      <div class="desc" style="margin-top:10px">${escapeHtml(s.description)}</div>
-      <div class="price">${escapeHtml(s.price)} ${escapeHtml(s.token)} <span class="hint">(${escapeHtml(s.price_usd || "?")})</span></div>
-    </article>`).join("");
+    if (!services.length) {
+      host.innerHTML = `<div class="empty">No active x402 services available for direct checkout.</div>`;
+      sel.innerHTML = `<option value="">No x402 services available</option>`;
+      el("x402BuyBtn").disabled = true;
+      return;
+    }
+
+    const tokens = [...new Set(services.map((s) => s.token || "SETH"))].join(", ");
+    const protocols = [...new Set(services.map((s) => s.protocol || "x402"))].join(", ");
+    const prices = services
+      .map((s) => Number.parseFloat(s.price))
+      .filter((price) => Number.isFinite(price));
+    const minPrice = prices.length ? Math.min(...prices).toFixed(6).replace(/0+$/, "").replace(/\.$/, "") : "--";
+    const maxPrice = prices.length ? Math.max(...prices).toFixed(6).replace(/0+$/, "").replace(/\.$/, "") : "--";
+    const priceLabel = minPrice === maxPrice ? minPrice : `${minPrice}–${maxPrice}`;
+    const first = services[0];
+
+    host.innerHTML = `<div class="result-details" style="margin-bottom:0">
+      <div class="result-row"><span class="label">Available</span><span class="value good">${escapeHtml(services.length)} service${services.length === 1 ? "" : "s"}</span></div>
+      <div class="result-row"><span class="label">Protocol</span><span class="value">${escapeHtml(protocols)}</span></div>
+      <div class="result-row"><span class="label">Token</span><span class="value">${escapeHtml(tokens)}</span></div>
+      <div class="result-row"><span class="label">Price range</span><span class="value good">${escapeHtml(priceLabel)} ${escapeHtml(tokens)}</span></div>
+      <div class="result-row"><span class="label">Checkout</span><span class="value">Use the service selector on the right.</span></div>
+      <div class="result-row"><span class="label">Default</span><span class="value">#${escapeHtml(first.id)} ${escapeHtml(first.name)}</span></div>
+    </div>`;
+    sel.disabled = false;
     sel.innerHTML = services.map((s) => `<option value="${escapeHtml(s.id)}">[${s.id}] ${escapeHtml(s.name)} — ${escapeHtml(s.price)} ${escapeHtml(s.token)}</option>`).join("");
+    el("x402BuyBtn").disabled = !connectedWallet;
   } catch (err) {
-    host.innerHTML = `<div class="empty">Failed: ${escapeHtml(err.message)}</div>`;
+    host.innerHTML = `<div class="empty">x402 availability failed: ${escapeHtml(err.message)}</div>`;
+    sel.innerHTML = `<option value="">Failed to load services</option>`;
+    el("x402BuyBtn").disabled = true;
   }
 }
 async function loadX402Revenue() {
@@ -732,7 +756,7 @@ async function loadX402Revenue() {
     el("x402RevenueChip").textContent = `revenue: ${total} SETH (${data.total_usd || "$0"})`;
     if (data.tx_count > 0) el("x402RevenueChip").classList.add("ok");
     const panel = el("x402RevenuePanel");
-    if (data.tx_count === 0) { panel.innerHTML = `<p class="empty">No revenue yet. Buy a service to see earnings.</p>`; return; }
+    if (data.tx_count === 0) { panel.innerHTML = `<p class="empty">No revenue yet. Completed x402 purchases will appear here.</p>`; return; }
     let rows = `<div class="log" style="max-height:250px">`;
     rows += `<div class="log-line"><span class="time">total</span><span class="msg good"><strong>${data.total_seth} SETH (${data.total_usd})</strong> — ${data.tx_count} tx(s)</span></div>`;
     for (const [sid, svc] of Object.entries(data.by_service || {})) {
@@ -791,7 +815,7 @@ function connectCAWWallet() {
   el("x402WalletConnect").classList.add("hidden");
   el("visitorWalletDisplay").textContent = `${short(addr, 10, 8)}`;
   el("visitorWalletInfo").classList.remove("hidden");
-  el("x402BuyBtn").disabled = false;
+  el("x402BuyBtn").disabled = !el("x402ServiceSelect").value;
   renderStatus(lastStatus || {});
   x402Log(`🔗 CAW wallet connected: ${addr.slice(0,14)}...`, "good");
 }
@@ -835,7 +859,7 @@ async function x402Buy() {
       x402Log("⏳ Pact submitted — approve in CAW App and try again.", "warn");
     }
   } finally {
-    el("x402BuyBtn").disabled = false;
+    el("x402BuyBtn").disabled = !connectedWallet || !el("x402ServiceSelect").value;
     el("x402BuyBtnText").textContent = "🤖 Buy with CAW";
   }
 }
