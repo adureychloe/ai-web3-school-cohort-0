@@ -68,17 +68,41 @@ LAST_RESORT_DEMO_PUBLIC_X402_SERVER = "https://gradually-clicker-tacking.ngrok-f
 
 
 def _self_hosts() -> set[str]:
-    hosts = set(_DEFAULT_SELF_HOSTS)
+    """Return loopback/local hosts this process serves directly."""
+    return set(_DEFAULT_SELF_HOSTS)
+
+
+def _endpoint_base(endpoint_uri: str) -> Optional[str]:
+    """Return normalized scheme://host/path base, without a trailing /request."""
+    try:
+        parsed = urlparse(endpoint_uri)
+    except Exception:
+        return None
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    path = (parsed.path or "").rstrip("/")
+    if path.endswith("/request"):
+        path = path[: -len("/request")].rstrip("/")
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}{path}"
+
+
+def _allowed_local_endpoint_bases() -> set[str]:
+    """Return exact public x402 bases this server is allowed to serve.
+
+    This intentionally accepts the current demo tunnel only at its mounted
+    /api/x402 base, plus explicitly configured bases. It does not treat
+    arbitrary external endpoints on the same internet as local.
+    """
+    bases = {LAST_RESORT_DEMO_PUBLIC_X402_SERVER}
     for env_name in ("X402_SELF_URL", "X402_PUBLIC_URL"):
-        env_url = os.environ.get(env_name, "").strip()
-        if env_url:
-            try:
-                netloc = urlparse(env_url).netloc or env_url
-                if netloc:
-                    hosts.add(netloc.lower())
-            except Exception:
-                pass
-    return hosts
+        base = _endpoint_base(os.environ.get(env_name, "").strip())
+        if base:
+            bases.add(base)
+    for raw in os.environ.get("X402_ALLOWED_LOCAL_BASES", "").split(","):
+        base = _endpoint_base(raw.strip())
+        if base:
+            bases.add(base)
+    return {_clean_base_url(base).lower() for base in bases if base}
 
 
 def _clean_base_url(url: str) -> str:
@@ -209,18 +233,26 @@ def _normalize_public_endpoint(
 def _endpoint_is_local(endpoint_uri: str) -> bool:
     """Return True if the service's endpointURI is served by this server.
 
-    Empty endpoint → treated as local (legacy/registry-default).
+    Empty endpoint → treated as local (legacy/registry-default). Public tunnel
+    URLs are accepted only when their exact scheme://host/base path is on the
+    local allowlist (for this demo, /api/x402), never by hostname alone.
     """
     if not endpoint_uri:
         return True
     try:
-        netloc = urlparse(endpoint_uri).netloc.lower()
+        parsed = urlparse(endpoint_uri)
     except Exception:
         return False
-    if not netloc:
-        # endpointURI may be a bare path like "/x402/request"
+    if not parsed.netloc:
+        # endpointURI may be a bare path like "/api/x402" or "/x402/request"
         return True
-    return netloc in _self_hosts()
+
+    netloc = parsed.netloc.lower()
+    if netloc in _self_hosts():
+        return True
+
+    base = _endpoint_base(endpoint_uri)
+    return bool(base and _clean_base_url(base).lower() in _allowed_local_endpoint_bases())
 
 
 # ── Data ────────────────────────────────────────────────────────
@@ -392,7 +424,7 @@ Delivered by Agent Commerce Hub. Payment verified on-chain via x402.
 
     # Generic delivery for any other on-chain service
     endpoint = service.get("endpointURI", "") or "(local server)"
-    payment_addr = service.get("paymentAddress", "")
+    payment_addr = service.get("payment_address") or service.get("paymentAddress", "")
     token = service.get("tokenId", "SETH")
     chain = service.get("chainId", "SETH")
     desc = service["description"]
@@ -407,7 +439,7 @@ Protocol:       {service.get('protocol', 'x402')}
 Service ID:     {sid}
 Token:          {token}
 Chain:          {chain}
-Provider:       {payment_addr[:14]}...
+Seller Payment: {payment_addr[:14]}...
 Endpoint:       {endpoint}
 
 Payment:
@@ -554,6 +586,18 @@ async def x402_request(
     # Payment verified → serve content
     analysis = _generate_analysis(service, payload.query)
 
+    proof = None
+    proof_error = None
+    try:
+        summary = f"Delivered {service['name']} via x402"
+        if payload.query:
+            summary = f"{summary}: {payload.query[:120]}"
+        proof = chain.record_delivery(service["id"], tx_hash, summary[:240])
+    except Exception as exc:
+        # Delivery must still succeed after verified payment; surface proof errors
+        # so the web UI/API can show why /api/proofs may not include this row yet.
+        proof_error = str(exc)[:500]
+
     # Record revenue
     _revenue[service["id"]] = _revenue.get(service["id"], 0.0) + float(service["price_seth"])
     _revenue_log.append({
@@ -564,13 +608,17 @@ async def x402_request(
         "timestamp": time.time(),
     })
 
-    return {
+    response = {
         "status": "delivered",
         "service": service["name"],
         "amount_paid": service["price_seth"],
         "tx_hash": tx_hash,
         "content": analysis,
+        "proof": proof,
     }
+    if proof_error:
+        response["proof_error"] = proof_error
+    return response
 
 
 @x402_app.get("/services")
@@ -604,6 +652,8 @@ async def x402_services(request: Request):
             "token": svc["tokenId"] or "SETH",
             "chain": svc["chainId"] or "SETH",
             "address": svc["paymentAddress"],
+            "payment_address": svc["paymentAddress"],
+            "provider": svc["provider"],
             "endpoint": _normalize_public_endpoint(svc["endpointURI"], svc["id"], public_base),
             "protocol": svc["protocol"] or "x402",
             "price_usd": f"${float(price_seth) * 3000:.2f}",
@@ -725,7 +775,7 @@ async def x402_health():
             "healthy": status.get("healthy", False),
             "wallet_paired": status.get("wallet_paired", False),
             "wallet_status": status.get("wallet_status", ""),
-            "seller_address": WALLET_SETH_ADDR,
+            "buyer_caw_address": WALLET_SETH_ADDR,
             "provider": X402_PROVIDER,
             "balance_seth": seth_balance,
             "active_services_onchain": active_count,
@@ -748,7 +798,7 @@ def serve(host: str = "0.0.0.0", port: int = 8888):
     except Exception as e:
         print(f"  ⚠️  Could not reach V2 registry: {e}")
     print(f"  Provider: {X402_PROVIDER}")
-    print(f"  Wallet:   {WALLET_SETH_ADDR[:14]}...")
+    print(f"  Buyer CAW: {WALLET_SETH_ADDR[:14]}...")
     print(f"  Listen:   http://{host}:{port}")
     print(f"  Endpoint: POST /request?tx_hash=0x...")
     print(f"  Register: POST /register_v2")

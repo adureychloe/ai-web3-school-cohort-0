@@ -148,6 +148,9 @@ async def _list_v2_services() -> list[dict[str, Any]]:
             continue
         item = {field: svc.get(field) for field in fields}
         item["protocol"] = protocol
+        item["sellerPaymentAddress"] = svc.get("paymentAddress")
+        item["sellerProvider"] = svc.get("provider")
+        item["buyerPairedCawAddress"] = WALLET_SETH_ADDR
         item["endpointURI"] = _normalize_public_endpoint(
             str(svc.get("endpointURI") or ""),
             int(svc.get("id") or 0),
@@ -614,6 +617,8 @@ async def api_x402_claim(payload: X402ClaimRequest) -> dict[str, Any]:
             "tx_hash": tx_hash,
             "content": result.get("content", ""),
             "amount_paid": result.get("amount_paid", ""),
+            "proof": result.get("proof"),
+            "proof_error": result.get("proof_error"),
         })
     except HTTPError as e:
         body = e.read().decode()
@@ -852,6 +857,8 @@ def _api_x402_buy_blocking(payload: X402BuyRequest) -> dict[str, Any]:
             "tx_hash": tx_hash,
             "reused_pact": not needs_approval and _x402_pact_id is not None,
             "content": result.get("content", ""),
+            "proof": result.get("proof"),
+            "proof_error": result.get("proof_error"),
         })
 
     except HTTPException:

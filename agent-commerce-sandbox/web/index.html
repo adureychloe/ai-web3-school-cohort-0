@@ -340,10 +340,13 @@ function showResult(result, serviceName) {
   const pactId = (result.pact && (result.pact.pact_id || result.pact.id || "")) || result.pact_id || "";
   if (pactId) rows.push(`<div class="result-row"><span class="label">Pact ID</span><span class="value mono">${escapeHtml(String(pactId).slice(0, 36))}</span></div>`);
 
-  if (result.proof && result.proof.tx_hash) {
-    const pTx = result.proof.tx_hash;
+  if (result.proof && (result.proof.tx_hash || result.proof.txHash)) {
+    const pTx = result.proof.tx_hash || result.proof.txHash;
     const pShort = typeof pTx === "string" && pTx.length > 42 ? pTx.slice(0, 42) : pTx;
     rows.push(`<div class="result-row"><span class="label">Proof Tx</span><span class="value mono good">${escapeHtml(pShort)}</span></div>`);
+  }
+  if (result.proof_error) {
+    rows.push(`<div class="result-row"><span class="label">Proof Error</span><span class="value warn">${escapeHtml(result.proof_error)}</span></div>`);
   }
 
   if (result.matched_service && result.matched_service.match_score !== undefined) {
@@ -434,11 +437,15 @@ function renderServices() {
   host.innerHTML = state.services.slice(0, 6).map((svc) => {
     const selected = state.selected && Number(state.selected.id) === Number(svc.id) ? " selected" : "";
     const price = `${formatEth(svc.priceWei)} ${svc.tokenId || "SETH"}`;
+    const sellerPayment = svc.sellerPaymentAddress || svc.paymentAddress || "";
+    const sellerProvider = svc.sellerProvider || svc.provider || "";
     return `<article class="card${selected}" tabindex="0" role="button" data-service-id="${escapeHtml(svc.id)}">
       <div class="card-top"><span>V2/x402 #${escapeHtml(svc.id)}</span><span>${escapeHtml(svc.protocol || "x402")}</span></div>
       <h3 class="service-name">${escapeHtml(svc.name)}</h3>
       <div class="desc">${escapeHtml(svc.description)}</div>
       <div class="price">${escapeHtml(price)}</div>
+      <div class="addr">seller payment ${escapeHtml(short(sellerPayment))}</div>
+      <div class="addr">provider ${escapeHtml(short(sellerProvider))}</div>
       <div class="addr">endpoint ${escapeHtml(short(svc.endpointURI || "", 24, 10))}</div>
     </article>`;
   }).join("");
@@ -457,7 +464,10 @@ function selectService(id) {
   el("paymentPanel").querySelector("h2").textContent = svc.name;
   const bal = state.balance && state.balance.amount && state.balance.amount !== "unknown" ? `Balance: ${parseFloat(state.balance.amount).toFixed(6)} SETH` : "";
   el("balanceInfo").textContent = bal;
-  el("selectedMeta").innerHTML = `${escapeHtml(svc.description)}<br><strong style="color:var(--green)">${escapeHtml(formatEth(svc.priceWei))} ${escapeHtml(svc.tokenId || "SETH")}</strong><br><span class="mono">x402 endpoint ${escapeHtml(svc.endpointURI || "")}</span>`;
+  const sellerPayment = svc.sellerPaymentAddress || svc.paymentAddress || "";
+  const sellerProvider = svc.sellerProvider || svc.provider || "";
+  const buyerCaw = connectedWallet || pairedCawAddress || svc.buyerPairedCawAddress || "";
+  el("selectedMeta").innerHTML = `${escapeHtml(svc.description)}<br><strong style="color:var(--green)">${escapeHtml(formatEth(svc.priceWei))} ${escapeHtml(svc.tokenId || "SETH")}</strong><br><span class="mono">seller payment: ${escapeHtml(sellerPayment)}</span><br><span class="mono">provider: ${escapeHtml(sellerProvider)}</span><br><span class="mono">buyer paired CAW: ${escapeHtml(buyerCaw || "not selected")}</span><br><span class="mono">x402 endpoint: ${escapeHtml(svc.endpointURI || "")}</span>`;
   el("intent").value = `Purchase ${svc.name} for: `;
   el("paymentBody").classList.remove("hidden");
   resetLog();
@@ -501,7 +511,7 @@ async function doSearch() {
         <h3 class="service-name">${escapeHtml(m.name)}</h3>
         <div class="desc">${escapeHtml(m.description)}</div>
         <div class="price">${escapeHtml(price)} <span class="hint">(${m.price_usd})</span></div>
-        <div class="addr">pay to ${escapeHtml(short(m.paymentAddress))}</div>
+        <div class="addr">seller payment ${escapeHtml(short(m.paymentAddress))}</div>
       </article>`;
     }).join("");
     // Re-bind click events
@@ -565,6 +575,9 @@ async function doProcure() {
     }
     if (result.proof) {
       log(`Delivery proof recorded on-chain!`, "good");
+    }
+    if (result.proof_error) {
+      log(`Delivery proof error: ${result.proof_error}`, "warn");
     }
 
     if (result.status === "completed") {
@@ -670,7 +683,8 @@ async function paySelected() {
     if (result.error) log(result.error, result.status === "failed" ? "bad" : "warn");
     if (result.transfer) log(`Transfer sent: ${result.tx_hash || result.transfer.transaction_hash || result.transfer.id || "submitted"}`, "good");
     if (result.tx_hash && !result.transfer) log(`Transfer sent: ${result.tx_hash}`, "good");
-    if (result.proof) log(`Delivery recorded: proof tx ${result.proof.tx_hash || "recorded"}`, "good");
+    if (result.proof) log(`Delivery recorded: proof tx ${result.proof.tx_hash || result.proof.txHash || "recorded"}`, "good");
+    if (result.proof_error) log(`Delivery proof error: ${result.proof_error}`, "warn");
     if (result.content) log(`x402 content delivered.`, "good");
     log(`x402 payment flow status: ${result.status}`, result.status === "completed" ? "good" : "warn");
     showResult(result, state.selected ? state.selected.name : "");
@@ -793,11 +807,12 @@ async function loadX402Services() {
       <div class="result-row"><span class="label">Protocol</span><span class="value">${escapeHtml(protocols)}</span></div>
       <div class="result-row"><span class="label">Token</span><span class="value">${escapeHtml(tokens)}</span></div>
       <div class="result-row"><span class="label">Price range</span><span class="value good">${escapeHtml(priceLabel)} ${escapeHtml(tokens)}</span></div>
-      <div class="result-row"><span class="label">Checkout</span><span class="value">Use the service selector on the right.</span></div>
-      <div class="result-row"><span class="label">Default</span><span class="value">#${escapeHtml(first.id)} ${escapeHtml(first.name)}</span></div>
+      <div class="result-row"><span class="label">Buyer CAW</span><span class="value mono">${escapeHtml(connectedWallet || pairedCawAddress || "select paired demo CAW")}</span></div>
+      <div class="result-row"><span class="label">Checkout</span><span class="value">Select a seller service on the right; payments go to that service's payment address.</span></div>
+      <div class="result-row"><span class="label">Default</span><span class="value">#${escapeHtml(first.id)} ${escapeHtml(first.name)} · seller payment ${escapeHtml(short(first.address))} · provider ${escapeHtml(short(first.provider))}</span></div>
     </div>`;
     sel.disabled = false;
-    sel.innerHTML = services.map((s) => `<option value="${escapeHtml(s.id)}">[${s.id}] ${escapeHtml(s.name)} — ${escapeHtml(s.price)} ${escapeHtml(s.token)}</option>`).join("");
+    sel.innerHTML = services.map((s) => `<option value="${escapeHtml(s.id)}">[${s.id}] ${escapeHtml(s.name)} — ${escapeHtml(s.price)} ${escapeHtml(s.token)} — seller ${escapeHtml(short(s.address))}</option>`).join("");
     renderWalletAreas();
   } catch (err) {
     host.innerHTML = `<div class="empty">x402 availability failed: ${escapeHtml(err.message)}</div>`;
@@ -1006,10 +1021,20 @@ async function x402Buy() {
     x402Log("✅ Payment complete — content delivered!", "good");
     if (result.tx_hash) x402Log(`Tx: ${result.tx_hash.slice(0,42)}...`, "good");
     if (result.amount_paid) x402Log(`Paid: ${result.amount_paid}`, "good");
+    if (result.proof) x402Log(`Delivery proof recorded: ${result.proof.tx_hash || result.proof.txHash || "recorded"}`, "good");
+    if (result.proof_error) x402Log(`Delivery proof error: ${result.proof_error}`, "warn");
     el("x402ResultIcon").textContent = "✅";
     el("x402ResultTitle").textContent = result.amount_paid ? `Delivered — ${result.amount_paid} paid` : "Service Delivered";
     el("x402ResultTitle").style.color = "var(--green)";
-    el("x402ResultDetails").innerHTML = renderContent(content);
+    let detailHtml = "";
+    if (result.proof && (result.proof.tx_hash || result.proof.txHash)) {
+      const ptx = result.proof.tx_hash || result.proof.txHash;
+      detailHtml += `<div class="result-row"><span class="label">Proof Tx</span><span class="value mono good">${escapeHtml(short(ptx, 18, 10))}</span></div>`;
+    }
+    if (result.proof_error) {
+      detailHtml += `<div class="result-row"><span class="label">Proof Error</span><span class="value warn">${escapeHtml(result.proof_error)}</span></div>`;
+    }
+    el("x402ResultDetails").innerHTML = detailHtml + renderContent(content);
     el("x402ResultPanel").classList.remove("hidden");
     await loadX402Revenue();
   } catch (err) {
