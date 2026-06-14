@@ -134,6 +134,8 @@ class X402Client:
         for s in raw:
             if active_only and not s["active"]:
                 continue
+            if str(s.get("protocol") or "x402").lower() != "x402":
+                continue
             if Web3 is not None:
                 price_seth = str(Web3.from_wei(s["priceWei"], "ether"))
             else:

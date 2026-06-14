@@ -18,6 +18,7 @@ Provider self-registration (writes on-chain via the deployer EOA):
   Client → POST /register_v2 {name, description, price_seth, endpoint_uri}
 """
 
+import hashlib
 import json
 import os
 import sys
@@ -260,6 +261,9 @@ def _endpoint_is_local(endpoint_uri: str) -> bool:
 # Replay protection: track used proof IDs to prevent double-spend
 _used_proofs: set[str] = set()
 
+# Replay protection for seller self-service destructive signatures.
+_used_seller_remove_messages: set[str] = set()
+
 # Track revenue in-memory (for demo; in production use contract events)
 _revenue: dict[int, float] = {}
 _revenue_log: list[dict] = []
@@ -273,6 +277,36 @@ def _get_chain() -> ChainClientV2:
     if _chain is None:
         _chain = ChainClientV2()
     return _chain
+
+
+def _require_admin_token(x_demo_admin_token: Optional[str], *, fail_closed: bool = False) -> None:
+    """Require the demo admin token when configured.
+
+    Admin-only lifecycle routes pass fail_closed=True so they are unavailable
+    unless the operator has explicitly configured DEMO_ADMIN_TOKEN. Seller
+    self-service routes use wallet signatures instead of this admin token.
+    """
+    admin_token = os.environ.get("DEMO_ADMIN_TOKEN", "").strip()
+    if not admin_token:
+        if fail_closed:
+            raise HTTPException(status_code=403, detail="Admin lifecycle is disabled because DEMO_ADMIN_TOKEN is not configured")
+        return
+    if x_demo_admin_token != admin_token:
+        raise HTTPException(status_code=403, detail="Admin token required for on-chain service changes")
+
+
+def _list_services_including_inactive(chain: ChainClientV2, limit: int = 200) -> list[dict]:
+    """List V2 services by id so admin views can include inactive rows."""
+    count = min(int(chain.get_service_count()), limit)
+    services = []
+    for service_id in range(1, count + 1):
+        try:
+            svc = chain.get_service(service_id)
+        except Exception:
+            continue
+        if svc and svc.get("id") == service_id and svc.get("name"):
+            services.append(svc)
+    return services
 
 
 def _normalize_service(svc: dict) -> dict:
@@ -292,6 +326,210 @@ def _normalize_service(svc: dict) -> dict:
         "active": svc["active"],
         "provider": svc["provider"],
     }
+
+
+def _normalize_address(addr: str) -> str:
+    """Validate and checksum-normalize an EVM address."""
+    try:
+        return Web3.to_checksum_address((addr or "").strip())
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid seller address")
+
+
+def _service_provider_is_server_owner(raw_service: dict) -> bool:
+    """Return True when the service provider is this demo server owner key."""
+    try:
+        provider = _normalize_address(raw_service.get("provider", ""))
+        owner = _normalize_address(X402_PROVIDER)
+    except HTTPException:
+        return False
+    return provider.lower() == owner.lower()
+
+
+def _seller_owns_raw_service(raw_service: dict, seller: str) -> bool:
+    """Return True if seller may manage the service via self-service routes.
+
+    A service paymentAddress is accepted only for services registered by the
+    hosted server owner/deployer (X402_PROVIDER). For services whose on-chain
+    provider is any other address, the connected seller must be that provider.
+    """
+    try:
+        seller_norm = _normalize_address(seller).lower()
+        provider = _normalize_address(raw_service.get("provider", "")).lower()
+    except HTTPException:
+        return False
+
+    if seller_norm == provider:
+        return True
+
+    if not _service_provider_is_server_owner(raw_service):
+        return False
+
+    try:
+        payment = _normalize_address(raw_service.get("paymentAddress", "")).lower()
+    except HTTPException:
+        return False
+    return seller_norm == payment
+
+
+def _require_self_service_seller(raw_service: dict, seller_address: str) -> str:
+    """Require seller_address to be authorized for seller self-service removal."""
+    seller = _normalize_address(seller_address)
+    if not _seller_owns_raw_service(raw_service, seller):
+        raise HTTPException(
+            status_code=403,
+            detail="Seller address is not authorized for this service (paymentAddress is allowed only for services whose provider is the server owner)",
+        )
+    return seller
+
+
+def _normalize_origin_value(value: str) -> Optional[str]:
+    """Return scheme://host[:port] for a browser origin-like value."""
+    if not value:
+        return None
+    try:
+        parsed = urlparse(value.strip())
+    except Exception:
+        return None
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    if parsed.path not in ("", "/") or parsed.params or parsed.query or parsed.fragment:
+        return None
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+
+
+def _request_origin_candidates(request: Request) -> set[str]:
+    """Return acceptable origins for seller-signed browser messages."""
+    candidates: set[str] = set()
+    for value in (
+        request.headers.get("origin", ""),
+        request.headers.get("referer", ""),
+        _public_base_url(request) or "",
+        str(request.base_url).rstrip("/"),
+    ):
+        origin = _normalize_origin_value(value)
+        if origin:
+            candidates.add(origin)
+    return candidates
+
+
+def _chain_signature_chain_id(chain: ChainClientV2) -> str:
+    """Return the registry EVM chain id used in seller remove signatures."""
+    return str(getattr(chain, "chain_id", "") or "")
+
+
+def _validate_seller_remove_message(
+    *,
+    seller: str,
+    service_id: int,
+    message: str,
+    raw_service: dict,
+    chain: ChainClientV2,
+    request: Request,
+) -> dict:
+    """Parse and validate the exact seller remove_v2 signed message fields."""
+    if not message:
+        raise HTTPException(status_code=400, detail="Seller remove message is required")
+    message = message.strip()
+    try:
+        data = json.loads(message)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Seller remove message must be JSON")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Seller remove message must be a JSON object")
+
+    expected_fields = {
+        "action",
+        "service_id",
+        "seller_address",
+        "chain_id",
+        "contract_address",
+        "origin",
+        "expires_at",
+    }
+    if set(data.keys()) != expected_fields:
+        raise HTTPException(status_code=400, detail="Seller remove message fields do not match remove_v2 schema")
+    if data.get("action") != "remove_v2":
+        raise HTTPException(status_code=400, detail="Invalid seller remove action")
+    try:
+        msg_service_id = int(data.get("service_id"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid seller remove service_id")
+    if msg_service_id != int(service_id):
+        raise HTTPException(status_code=400, detail="Seller remove service_id mismatch")
+
+    msg_seller = _normalize_address(str(data.get("seller_address") or ""))
+    if msg_seller.lower() != seller.lower():
+        raise HTTPException(status_code=400, detail="Seller remove seller_address mismatch")
+
+    expected_chain_id = _chain_signature_chain_id(chain)
+    if str(data.get("chain_id")) != expected_chain_id:
+        raise HTTPException(status_code=400, detail="Seller remove chain_id mismatch")
+
+    try:
+        msg_contract = _normalize_address(str(data.get("contract_address") or ""))
+        expected_contract = _normalize_address(chain.contract_addr)
+    except HTTPException:
+        raise HTTPException(status_code=400, detail="Invalid seller remove contract_address")
+    if msg_contract.lower() != expected_contract.lower():
+        raise HTTPException(status_code=400, detail="Seller remove contract_address mismatch")
+
+    msg_origin = _normalize_origin_value(str(data.get("origin") or ""))
+    if not msg_origin:
+        raise HTTPException(status_code=400, detail="Invalid seller remove origin")
+    origin_candidates = _request_origin_candidates(request)
+    if origin_candidates and msg_origin not in origin_candidates:
+        raise HTTPException(status_code=403, detail="Seller remove origin mismatch")
+
+    try:
+        expires_at = int(data.get("expires_at"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid seller remove expires_at")
+    now_ts = int(time.time())
+    if expires_at <= now_ts:
+        raise HTTPException(status_code=400, detail="Seller remove signature has expired")
+    if expires_at > now_ts + 3600:
+        raise HTTPException(status_code=400, detail="Seller remove expiry is too far in the future")
+
+    return data
+
+
+def _verify_self_service_signature(
+    *,
+    seller: str,
+    service_id: int,
+    message: str,
+    signature: str,
+    raw_service: dict,
+    chain: ChainClientV2,
+    request: Request,
+) -> None:
+    """Verify an EIP-191 seller signature for destructive self-service actions."""
+    _validate_seller_remove_message(
+        seller=seller,
+        service_id=service_id,
+        message=message,
+        raw_service=raw_service,
+        chain=chain,
+        request=request,
+    )
+    if not signature:
+        raise HTTPException(status_code=400, detail="Seller signature is required for self-service remove")
+
+    replay_key = hashlib.sha256(message.encode("utf-8")).hexdigest()
+    if replay_key in _used_seller_remove_messages:
+        raise HTTPException(status_code=409, detail="Seller remove signature has already been used")
+
+    try:
+        from eth_account.account import Account
+        from eth_account.messages import encode_defunct
+        recovered = Account.recover_message(encode_defunct(text=message), signature=signature.strip())
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Seller signature verification failed: {exc}")
+    if recovered.lower() != seller.lower():
+        raise HTTPException(status_code=403, detail="Seller signature does not match seller address")
+
+    _used_seller_remove_messages.add(replay_key)
 
 
 # ── Helpers ─────────────────────────────────────────────────────
@@ -487,6 +725,30 @@ class RegisterV2Request(BaseModel):
     payment_address: Optional[str] = None
 
 
+class UpdateV2Request(BaseModel):
+    """Request body for updating mutable ServiceRegistryV2 metadata."""
+    service_id: int
+    name: str
+    description: str = ""
+    price_seth: str = "0.00001"
+    endpoint_uri: str = ""
+    seller_address: Optional[str] = None
+    payment_address: Optional[str] = None
+
+
+class ServiceLifecycleRequest(BaseModel):
+    """Request body for activating/deactivating a ServiceRegistryV2 service."""
+    service_id: int
+
+
+class SellerRemoveServiceRequest(BaseModel):
+    """Seller self-service removal request for a ServiceRegistryV2 service."""
+    service_id: int
+    seller_address: str
+    message: str = ""
+    signature: str = ""
+
+
 # ── Error Response Helper ────────────────────────────────────────
 
 X402_HEADER = "X-Payment-Info"
@@ -640,6 +902,8 @@ async def x402_services(request: Request):
     for svc in raw_list:
         if not svc["active"]:
             continue
+        if str(svc.get("protocol") or "x402").lower() != "x402":
+            continue
         if Web3 is not None:
             price_seth = str(Web3.from_wei(svc["priceWei"], "ether"))
         else:
@@ -670,9 +934,7 @@ async def x402_register_v2(payload: RegisterV2Request, x_demo_admin_token: Optio
     non-local callers must provide X-Demo-Admin-Token when DEMO_ADMIN_TOKEN is
     configured. Local/dev calls continue to work for the hackathon demo.
     """
-    admin_token = os.environ.get("DEMO_ADMIN_TOKEN", "").strip()
-    if admin_token and x_demo_admin_token != admin_token:
-        raise HTTPException(status_code=403, detail="Admin token required for on-chain registration")
+    _require_admin_token(x_demo_admin_token)
 
     try:
         price_wei = Web3.to_wei(float(payload.price_seth), "ether")
@@ -691,14 +953,14 @@ async def x402_register_v2(payload: RegisterV2Request, x_demo_admin_token: Optio
     chain = _get_chain()
     try:
         result = chain.register_service(
-            name=payload.name,
+            name=payload.name.strip(),
             desc=payload.description,
             payment_addr=payment_addr,
             price_wei=price_wei,
             token_id=payload.token_id,
             chain_id=payload.chain_id,
             endpoint_uri=payload.endpoint_uri.strip(),
-            protocol=payload.protocol,
+            protocol=payload.protocol.strip() or "x402",
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"On-chain registration failed: {exc}")
@@ -711,12 +973,213 @@ async def x402_register_v2(payload: RegisterV2Request, x_demo_admin_token: Optio
         "service_id": result.get("service_id"),
         "tx_hash": result.get("tx_hash"),
         "block": result.get("block"),
-        "name": payload.name,
+        "name": payload.name.strip(),
         "price_seth": payload.price_seth,
         "payment_address": payment_addr,
         "provider": X402_PROVIDER,
         "endpoint_uri": payload.endpoint_uri.strip(),
     }
+
+
+@x402_app.get("/admin/services")
+async def x402_admin_services(
+    request: Request,
+    x_demo_admin_token: Optional[str] = Header(None),
+):
+    """List V2 services, including inactive ones, for seller/admin lifecycle controls."""
+    _require_admin_token(x_demo_admin_token, fail_closed=True)
+    chain = _get_chain()
+    public_base = _public_base_url(request)
+    try:
+        raw_list = _list_services_including_inactive(chain)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to list admin services: {exc}")
+
+    services = []
+    for svc in raw_list:
+        item = _normalize_service(svc)
+        item["endpoint"] = _normalize_public_endpoint(svc["endpointURI"], svc["id"], public_base)
+        services.append(item)
+    return {"services": services}
+
+
+
+
+@x402_app.get("/seller/services_v2")
+async def x402_seller_services_v2(
+    request: Request,
+    seller_address: str = Query(..., description="Seller/provider/payment EVM address"),
+):
+    """List services owned by a seller wallet without requiring admin token.
+
+    Ownership mirrors seller remove authorization: provider always owns the
+    service, while paymentAddress owns it only when provider is this hosted
+    server owner (X402_PROVIDER). Inactive services are included so sellers can
+    see lifecycle state after a soft delete.
+    """
+    seller = _normalize_address(seller_address)
+    chain = _get_chain()
+    public_base = _public_base_url(request)
+    try:
+        raw_list = _list_services_including_inactive(chain)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to list seller services: {exc}")
+
+    services = []
+    for svc in raw_list:
+        if str(svc.get("protocol") or "x402").lower() != "x402":
+            continue
+        if not _seller_owns_raw_service(svc, seller):
+            continue
+        item = _normalize_service(svc)
+        item["endpoint"] = _normalize_public_endpoint(svc["endpointURI"], svc["id"], public_base)
+        item["seller_remove_authorized"] = True
+        item["payment_address_authorized"] = (
+            _service_provider_is_server_owner(svc)
+            and (svc.get("paymentAddress") or "").lower() == seller.lower()
+        )
+        services.append(item)
+
+    return {
+        "seller_address": seller,
+        "chain_id": _chain_signature_chain_id(chain),
+        "contract_address": chain.contract_addr,
+        "x402_provider": X402_PROVIDER,
+        "services": services,
+    }
+
+
+@x402_app.post("/update_v2")
+async def x402_update_v2(payload: UpdateV2Request, x_demo_admin_token: Optional[str] = Header(None)):
+    """Update mutable metadata for a ServiceRegistryV2 service."""
+    _require_admin_token(x_demo_admin_token, fail_closed=True)
+    if payload.service_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid service_id")
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="name is required")
+    if not payload.endpoint_uri.strip():
+        raise HTTPException(status_code=400, detail="endpoint_uri is required")
+
+    try:
+        price_wei = Web3.to_wei(float(payload.price_seth), "ether")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid price_seth")
+
+    chain = _get_chain()
+    payment_addr_raw = (payload.payment_address or payload.seller_address or "").strip()
+    if not payment_addr_raw:
+        try:
+            current = chain.get_service(payload.service_id)
+            payment_addr_raw = current.get("paymentAddress", "")
+        except Exception:
+            payment_addr_raw = ""
+    try:
+        payment_addr = Web3.to_checksum_address(payment_addr_raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid seller/payment address")
+
+    try:
+        result = chain.update_service(
+            service_id=payload.service_id,
+            name=payload.name.strip(),
+            desc=payload.description,
+            price_wei=price_wei,
+            payment_addr=payment_addr,
+            endpoint_uri=payload.endpoint_uri.strip(),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"On-chain update failed: {exc}")
+
+    if result.get("status") != 1:
+        raise HTTPException(status_code=500, detail=f"Update tx failed: {result.get('tx_hash')}")
+
+    return {
+        "status": "updated",
+        "service_id": payload.service_id,
+        "tx_hash": result.get("tx_hash"),
+        "block": result.get("block"),
+    }
+
+
+@x402_app.post("/deactivate_v2")
+async def x402_deactivate_v2(payload: ServiceLifecycleRequest, x_demo_admin_token: Optional[str] = Header(None)):
+    """Admin/demo deactivate for a ServiceRegistryV2 service."""
+    _require_admin_token(x_demo_admin_token, fail_closed=True)
+    if payload.service_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid service_id")
+    try:
+        result = _get_chain().deactivate_service(payload.service_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"On-chain deactivate failed: {exc}")
+    if result.get("status") != 1:
+        raise HTTPException(status_code=500, detail=f"Deactivate tx failed: {result.get('tx_hash')}")
+    return {"status": "deactivated", "service_id": payload.service_id, "tx_hash": result.get("tx_hash"), "block": result.get("block")}
+
+
+@x402_app.post("/seller/remove_v2")
+async def x402_seller_remove_v2(payload: SellerRemoveServiceRequest, request: Request):
+    """Seller self-service soft delete for a ServiceRegistryV2 service.
+
+    Uses the contract's existing deactivate() primitive, so removed services are
+    hidden from buyer discovery but retained on-chain for history/proofs. The
+    deployed demo server still pays gas with TEST_PRIVATE_KEY; before doing so
+    it verifies the connected seller address owns the service and signed the
+    exact removal message.
+    """
+    if payload.service_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid service_id")
+
+    chain = _get_chain()
+    try:
+        raw = chain.get_service(payload.service_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"Service {payload.service_id} not found")
+    if not raw or raw.get("id") != payload.service_id or not raw.get("name"):
+        raise HTTPException(status_code=404, detail=f"Service {payload.service_id} not found")
+    if not raw.get("active"):
+        raise HTTPException(status_code=409, detail=f"Service {payload.service_id} is already inactive")
+
+    seller = _require_self_service_seller(raw, payload.seller_address)
+    _verify_self_service_signature(
+        seller=seller,
+        service_id=payload.service_id,
+        message=payload.message,
+        signature=payload.signature,
+        raw_service=raw,
+        chain=chain,
+        request=request,
+    )
+
+    try:
+        result = chain.remove_service(payload.service_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"On-chain seller remove failed: {exc}")
+    if result.get("status") != 1:
+        raise HTTPException(status_code=500, detail=f"Seller remove tx failed: {result.get('tx_hash')}")
+    return {
+        "status": "removed",
+        "action": "soft_deactivated",
+        "service_id": payload.service_id,
+        "seller_address": seller,
+        "tx_hash": result.get("tx_hash"),
+        "block": result.get("block"),
+        "message": "Service removed from buyer discovery via ServiceRegistryV2.deactivate().",
+    }
+
+
+@x402_app.post("/reactivate_v2")
+async def x402_reactivate_v2(payload: ServiceLifecycleRequest, x_demo_admin_token: Optional[str] = Header(None)):
+    """Reactivate a ServiceRegistryV2 service."""
+    _require_admin_token(x_demo_admin_token, fail_closed=True)
+    if payload.service_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid service_id")
+    try:
+        result = _get_chain().reactivate_service(payload.service_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"On-chain reactivate failed: {exc}")
+    if result.get("status") != 1:
+        raise HTTPException(status_code=500, detail=f"Reactivate tx failed: {result.get('tx_hash')}")
+    return {"status": "reactivated", "service_id": payload.service_id, "tx_hash": result.get("tx_hash"), "block": result.get("block")}
 
 
 @x402_app.get("/revenue")
@@ -771,12 +1234,24 @@ async def x402_health():
         except Exception:
             pass
 
+        chain_id = None
+        contract_addr = None
+        try:
+            chain = _get_chain()
+            chain_id = _chain_signature_chain_id(chain)
+            contract_addr = chain.contract_addr
+        except Exception:
+            pass
+
         return {
             "healthy": status.get("healthy", False),
             "wallet_paired": status.get("wallet_paired", False),
             "wallet_status": status.get("wallet_status", ""),
             "buyer_caw_address": WALLET_SETH_ADDR,
             "provider": X402_PROVIDER,
+            "x402_provider": X402_PROVIDER,
+            "chain_id": chain_id,
+            "contract_address": contract_addr,
             "balance_seth": seth_balance,
             "active_services_onchain": active_count,
             "total_revenue_seth": sum(_revenue.values()),

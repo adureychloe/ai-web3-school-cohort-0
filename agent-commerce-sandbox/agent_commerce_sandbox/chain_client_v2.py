@@ -190,11 +190,19 @@ class ChainClientV2:
 
         gas_price = self.w3.eth.gas_price
         nonce = self.w3.eth.get_transaction_count(self._acct.address)
+        tx_gas = int(gas)
+        try:
+            estimated_gas = int(fn.estimate_gas({"from": self._acct.address}))
+            # Avoid over-reserving ETH on Sepolia by using a measured limit with
+            # headroom instead of the broad per-method fallback.
+            tx_gas = min(tx_gas, int(estimated_gas * 1.25) + 10_000)
+        except Exception:
+            pass
 
         txn = fn.build_transaction({
             "from": self._acct.address,
             "nonce": nonce,
-            "gas": gas,
+            "gas": tx_gas,
             "gasPrice": gas_price,
             "chainId": self.chain_id,
         })
@@ -279,6 +287,15 @@ class ChainClientV2:
         fn = self.contract.functions.deactivate(int(service_id))
         result, _ = self._send_tx(fn, gas=200000)
         return result
+
+    def remove_service(self, service_id: int) -> dict:
+        """Soft-remove a service by using ServiceRegistryV2.deactivate().
+
+        ServiceRegistryV2 does not expose a hard-delete primitive. Deactivate is
+        the on-chain lifecycle operation that removes a service from buyer
+        discovery while preserving historical registry/proof data.
+        """
+        return self.deactivate_service(service_id)
 
     def reactivate_service(self, service_id: int) -> dict:
         """Reactivate a previously deactivated service on-chain."""
