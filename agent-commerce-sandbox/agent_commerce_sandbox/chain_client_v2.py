@@ -236,7 +236,7 @@ class ChainClientV2:
             Dict with tx_hash, block, status, and the new service_id (if found).
         """
         fn = self.contract.functions.register(
-            name, desc, Web3.to_checksum_address(payment_addr), int(price_wei),
+            name, desc, self.w3.to_checksum_address(payment_addr), int(price_wei),
             token_id, chain_id, endpoint_uri, protocol,
         )
         result, receipt = self._send_tx(fn, gas=600000)
