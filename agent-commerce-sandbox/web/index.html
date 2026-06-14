@@ -78,6 +78,20 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
 .result-row .value.bad { color:var(--red) }
 .explorer-link { color:var(--cyan); text-decoration:underline; cursor:pointer }
 .explorer-link:hover { color:var(--green) }
+.delivery-modal { position:fixed; inset:0; z-index:90; display:flex; align-items:center; justify-content:center; padding:20px; background:rgba(6,8,13,.78); backdrop-filter:blur(10px); animation:modalFade .16s ease }
+.delivery-dialog { width:min(760px,100%); max-height:min(86vh,780px); display:flex; flex-direction:column; border:1px solid rgba(91,255,199,.34); border-radius:24px; background:linear-gradient(180deg,rgba(16,26,40,.97),rgba(12,18,28,.98)); box-shadow:0 30px 100px rgba(0,0,0,.6),0 0 48px rgba(91,255,199,.12); overflow:hidden; animation:modalPop .18s ease }
+.delivery-modal-header { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; padding:22px 24px 16px; border-bottom:1px solid rgba(255,255,255,.09); background:radial-gradient(circle at 15% 0,rgba(91,255,199,.18),transparent 26rem),rgba(255,255,255,.025) }
+.delivery-eyebrow { color:var(--green); font-size:.76rem; font-weight:900; letter-spacing:.08em; text-transform:uppercase; margin-bottom:7px }
+.delivery-title { margin:0; font-size:clamp(1.2rem,2.5vw,1.65rem); letter-spacing:-.04em }
+.delivery-subtitle { color:var(--muted); margin-top:7px; font-size:.84rem; line-height:1.45 }
+.delivery-close { flex:0 0 auto; width:38px; height:38px; border-radius:13px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.05); color:var(--muted); font:inherit; font-size:1.25rem; line-height:1; cursor:pointer }
+.delivery-close:hover,.delivery-close:focus { color:var(--green); border-color:rgba(91,255,199,.45); background:rgba(91,255,199,.08); outline:none }
+.delivery-modal-body { padding:18px 24px 24px; overflow:auto }
+.delivery-summary { margin-bottom:16px; border:1px solid rgba(255,255,255,.09); border-radius:16px; background:rgba(0,0,0,.18); padding:12px 14px }
+.delivery-content-label { color:var(--cyan); font-size:.78rem; margin:0 0 10px; font-weight:900; letter-spacing:.04em }
+.delivery-content { border:1px solid rgba(91,255,199,.18); border-radius:18px; background:rgba(0,0,0,.18); padding:14px }
+@keyframes modalFade { from { opacity:0 } to { opacity:1 } }
+@keyframes modalPop { from { opacity:0; transform:translateY(10px) scale(.985) } to { opacity:1; transform:none } }
 @media (max-width:980px) { header { position:static; flex-direction:column; align-items:flex-start } .statusbar { justify-content:flex-start } .grid { grid-template-columns:1fr } .cards { grid-template-columns:1fr } .card { min-height:auto } }
 @media (max-width:620px) { .shell { width:min(100% - 20px,1180px); padding-top:10px } header,.panel { padding:14px; border-radius:16px } .toolbar { align-items:flex-start; flex-direction:column } table,thead,tbody,th,td,tr { display:block } thead { display:none } tr { border:1px solid rgba(255,255,255,.1); border-radius:14px; margin-bottom:10px; padding:6px } td { border-bottom:0; padding:7px 8px } td:before { content:attr(data-label); display:block; color:var(--cyan); font-size:.7rem } }
 </style>
@@ -303,6 +317,23 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
   </div>
 </section>
 </main>
+<div id="deliveryModal" class="delivery-modal hidden" role="dialog" aria-modal="true" aria-labelledby="deliveryModalTitle">
+  <div class="delivery-dialog" role="document">
+    <div class="delivery-modal-header">
+      <div>
+        <div class="delivery-eyebrow">Service delivered</div>
+        <h2 class="delivery-title" id="deliveryModalTitle">Purchase Complete</h2>
+        <div class="delivery-subtitle" id="deliveryModalSubtitle">Your paid service content is ready.</div>
+      </div>
+      <button class="delivery-close" id="deliveryModalClose" type="button" aria-label="Close delivered content">×</button>
+    </div>
+    <div class="delivery-modal-body">
+      <div class="delivery-summary" id="deliveryModalSummary"></div>
+      <div class="delivery-content-label">Delivered content</div>
+      <div class="delivery-content" id="deliveryModalContent"></div>
+    </div>
+  </div>
+</div>
 <script>
 
 const state = { services: [], proofs: [], selected: null, paying: false, waitTimer: null, pactPollTimer: null, lastPactStatus: "", balance: null, sellerServices: [], sellerServicesMeta: null };
@@ -338,6 +369,57 @@ function log(message, kind = "") {
 }
 function resetLog() { el("log").innerHTML = ""; }
 
+function getResultTxHash(result) {
+  return (result && (result.tx_hash || (result.transfer && (result.transfer.transaction_hash || result.transfer.id)))) || "";
+}
+function getProofTxHash(result) {
+  return (result && result.proof && (result.proof.tx_hash || result.proof.txHash)) || "";
+}
+function explorerTxLink(txHash, label) {
+  if (!txHash) return "";
+  const text = label || short(txHash, 18, 10);
+  return `<a class="explorer-link" href="https://sepolia.etherscan.io/tx/${encodeURIComponent(txHash)}" target="_blank" rel="noopener">${escapeHtml(text)}</a>`;
+}
+function amountPaidLabel(result) {
+  if (!result) return "";
+  const amount = result.amount_paid || (result.payment && result.payment.amount) || "";
+  if (!amount) return "";
+  const token = result.token_id || result.token || (result.payment && (result.payment.token_id || result.payment.token)) || "SETH";
+  return `${amount} ${token}`;
+}
+function buildDeliverySummary(result, serviceName) {
+  const rows = [];
+  if (serviceName) rows.push(`<div class="result-row"><span class="label">Service</span><span class="value">${escapeHtml(serviceName)}</span></div>`);
+  const paid = amountPaidLabel(result);
+  if (paid) rows.push(`<div class="result-row"><span class="label">Amount Paid</span><span class="value good">${escapeHtml(paid)}</span></div>`);
+  const txHash = getResultTxHash(result);
+  if (txHash) rows.push(`<div class="result-row"><span class="label">Tx Hash</span><span class="value mono">${explorerTxLink(txHash)}</span></div>`);
+  const proofTx = getProofTxHash(result);
+  if (proofTx) rows.push(`<div class="result-row"><span class="label">Proof Tx</span><span class="value mono good">${explorerTxLink(proofTx)}</span></div>`);
+  return rows.join("");
+}
+function shouldOpenDeliveryModal(result) {
+  return Boolean(result && String(result.status || "").toLowerCase() === "completed" && result.content);
+}
+function openDeliveryModal(result, serviceName) {
+  if (!shouldOpenDeliveryModal(result)) return;
+  const modal = el("deliveryModal");
+  if (!modal) return;
+  const name = serviceName || result.service || "Delivered Service";
+  el("deliveryModalTitle").textContent = name;
+  const paid = amountPaidLabel(result);
+  el("deliveryModalSubtitle").textContent = paid ? `Purchase complete · ${paid} paid` : "Purchase complete · content delivered";
+  el("deliveryModalSummary").innerHTML = buildDeliverySummary(result, name) || `<div class="hint">Completed delivery</div>`;
+  el("deliveryModalContent").innerHTML = renderContent(String(result.content));
+  modal.classList.remove("hidden");
+  const closeBtn = el("deliveryModalClose");
+  if (closeBtn) closeBtn.focus({ preventScroll: true });
+}
+function closeDeliveryModal() {
+  const modal = el("deliveryModal");
+  if (modal) modal.classList.add("hidden");
+}
+
 function showResult(result, serviceName) {
   const icon = el("resultIcon");
   const title = el("resultTitle");
@@ -364,19 +446,20 @@ function showResult(result, serviceName) {
   const rows = [];
   if (serviceName) rows.push(`<div class="result-row"><span class="label">Service</span><span class="value">${escapeHtml(serviceName)}</span></div>`);
 
-  const txHash = result.tx_hash || (result.transfer && (result.transfer.transaction_hash || result.transfer.id)) || "";
+  const paid = amountPaidLabel(result);
+  if (paid) rows.push(`<div class="result-row"><span class="label">Amount Paid</span><span class="value good">${escapeHtml(paid)}</span></div>`);
+
+  const txHash = getResultTxHash(result);
   if (txHash) {
-    const txShort = typeof txHash === "string" && txHash.length > 42 ? txHash.slice(0, 42) : txHash;
-    rows.push(`<div class="result-row"><span class="label">Tx Hash</span><span class="value mono"><a class="explorer-link" href="https://sepolia.etherscan.io/tx/${encodeURIComponent(txHash)}" target="_blank" rel="noopener">${escapeHtml(txShort)}</a></span></div>`);
+    rows.push(`<div class="result-row"><span class="label">Tx Hash</span><span class="value mono">${explorerTxLink(txHash)}</span></div>`);
   }
 
   const pactId = (result.pact && (result.pact.pact_id || result.pact.id || "")) || result.pact_id || "";
   if (pactId) rows.push(`<div class="result-row"><span class="label">Pact ID</span><span class="value mono">${escapeHtml(String(pactId).slice(0, 36))}</span></div>`);
 
-  if (result.proof && (result.proof.tx_hash || result.proof.txHash)) {
-    const pTx = result.proof.tx_hash || result.proof.txHash;
-    const pShort = typeof pTx === "string" && pTx.length > 42 ? pTx.slice(0, 42) : pTx;
-    rows.push(`<div class="result-row"><span class="label">Proof Tx</span><span class="value mono good">${escapeHtml(pShort)}</span></div>`);
+  const pTx = getProofTxHash(result);
+  if (pTx) {
+    rows.push(`<div class="result-row"><span class="label">Proof Tx</span><span class="value mono good">${explorerTxLink(pTx)}</span></div>`);
   }
   if (result.proof_error) {
     rows.push(`<div class="result-row"><span class="label">Proof Error</span><span class="value warn">${escapeHtml(result.proof_error)}</span></div>`);
@@ -395,6 +478,7 @@ function showResult(result, serviceName) {
   // Hide payment body, show result panel
   el("paymentBody").classList.add("hidden");
   el("resultPanel").classList.remove("hidden");
+  openDeliveryModal(result, serviceName);
 }
 
 function resetResult() {
@@ -1123,6 +1207,11 @@ el("searchBtn").addEventListener("click", doSearch);
 el("procureBtn").addEventListener("click", doProcure);
 el("searchInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(); } });
 el("resetResultBtn").addEventListener("click", resetResult);
+el("deliveryModalClose").addEventListener("click", closeDeliveryModal);
+el("deliveryModal").addEventListener("click", (event) => { if (event.target === el("deliveryModal")) closeDeliveryModal(); });
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !el("deliveryModal").classList.contains("hidden")) closeDeliveryModal();
+});
 // ── Wallet Connection ──────────────────────────────
 let connectedWallet = null;
 let pairedCawAddress = null;
@@ -1313,16 +1402,15 @@ async function x402Buy() {
       el("x402ResultTitle").textContent = `Status: ${result.status || "unknown"}`;
       el("x402ResultTitle").style.color = "var(--muted)";
     }
-    let detailHtml = "";
-    if (result.proof && (result.proof.tx_hash || result.proof.txHash)) {
-      const ptx = result.proof.tx_hash || result.proof.txHash;
-      detailHtml += `<div class="result-row"><span class="label">Proof Tx</span><span class="value mono good">${escapeHtml(short(ptx, 18, 10))}</span></div>`;
-    }
+    const selectedOption = sel.options[sel.selectedIndex];
+    const selectedServiceName = result.service || (selectedOption ? selectedOption.textContent.replace(/^\[[^\]]+\]\s*/, "").split(" — ")[0].trim() : "");
+    let detailHtml = buildDeliverySummary(result, selectedServiceName);
     if (result.proof_error) {
       detailHtml += `<div class="result-row"><span class="label">Proof Error</span><span class="value warn">${escapeHtml(result.proof_error)}</span></div>`;
     }
     el("x402ResultDetails").innerHTML = detailHtml + renderContent(content);
     el("x402ResultPanel").classList.remove("hidden");
+    openDeliveryModal(result, selectedServiceName);
     await loadX402Revenue();
   } catch (err) {
     x402Log(`❌ Auto-pay failed: ${err.message}`, "bad");
