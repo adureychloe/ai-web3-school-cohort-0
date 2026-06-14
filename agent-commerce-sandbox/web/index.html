@@ -146,6 +146,7 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
 </header>
 <nav class="tabs" aria-label="Sections">
   <button class="tab active" id="servicesTab" type="button">Discover &amp; Buy</button>
+  <button class="tab" id="agentConsoleTab" type="button">Agent Console</button>
   <button class="tab" id="proofsTab" type="button">Proofs</button>
   <button class="tab" id="x402Tab" type="button">Seller &amp; x402</button>
 </nav>
@@ -195,6 +196,73 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
 <div id="paymentBody" class="hidden"><p id="selectedMeta"></p><p id="balanceInfo" class="bal-chip" style="margin:0 0 12px"></p><label for="intent">Request</label><textarea id="intent" placeholder="Describe what you want the provider agent to do..."></textarea><div class="actions"><button id="payButton" class="primary" type="button" disabled>Buy via x402</button><span class="hint">First x402 buy may require CAW approval; later buys can auto-execute.</span></div></div>
 <div class="log" id="log" aria-live="polite"><div class="log-line"><span class="time">ready</span><span class="msg">Terminal log initialized.</span></div></div>
 <div id="resultPanel" class="hidden" style="margin-top:14px;border:1px solid rgba(91,255,199,.2);border-radius:16px;padding:16px;background:rgba(12,18,28,.95)"><div class="result-panel"><div class="result-icon" id="resultIcon">✅</div><div class="result-title" id="resultTitle">Payment Complete</div><div class="result-details" id="resultDetails"></div><div class="actions" style="justify-content:center"><button class="ghost" id="resetResultBtn" type="button">New Procurement</button></div></div></div></aside></div></section>
+<section id="agentConsoleView" class="hidden">
+  <div class="panel" style="margin-bottom:18px;border-color:rgba(101,216,255,.2);background:rgba(101,216,255,.035)">
+    <div class="toolbar" style="margin-bottom:6px">
+      <div>
+        <h2>Agent Console</h2>
+        <p>Judge-facing control room for autonomous buyer, seller, and broker/procurement roles. The Buyer Agent calls <strong>/api/agent/buyer/procure</strong> and keeps the current V2/x402 + CAW Pact payment semantics.</p>
+      </div>
+      <span class="chip ok">V2/x402 agents</span>
+    </div>
+    <div class="hint">Use the global Buyer CAW Wallet above for auto-pay. Seller actions intentionally reuse the Seller &amp; x402 dashboard so registration, updates, removal, direct checkout, revenue, and proofs stay on the same V2/x402 path.</div>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="panel" style="margin-bottom:18px">
+        <div class="toolbar" style="align-items:flex-start">
+          <div>
+            <div class="chip ok" style="display:inline-block;margin-bottom:10px">Buyer Agent</div>
+            <h2 style="margin:0 0 8px">Autonomous procurement</h2>
+            <p>Describe a task, set a SETH budget, and let the Buyer Agent discover matching ServiceRegistryV2 services, rank candidates, and optionally pay via x402 using the paired demo CAW.</p>
+          </div>
+        </div>
+        <label for="agentConsoleRequest">Procurement request</label>
+        <textarea id="agentConsoleRequest" placeholder="e.g. Find a V2/x402 seller who can produce an ETH market brief with on-chain delivery proof."></textarea>
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,.8fr);gap:12px;align-items:end;margin-top:12px">
+          <div>
+            <label for="agentConsoleBudget" style="margin-top:0">Budget (SETH)</label>
+            <input id="agentConsoleBudget" type="number" min="0" step="0.000001" value="0.00005" style="width:100%;border-radius:14px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.28);color:var(--text);padding:12px 14px;font:inherit;outline:none">
+          </div>
+          <label for="agentConsoleAutoPay" style="display:flex;gap:10px;align-items:center;margin:0;color:var(--text);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:12px;background:rgba(255,255,255,.035)">
+            <input id="agentConsoleAutoPay" type="checkbox" checked style="width:18px;height:18px;accent-color:#5bffc7">
+            <span><strong>Auto-pay via CAW</strong><br><span class="hint">Uses current V2/x402 Pact flow</span></span>
+          </label>
+        </div>
+        <div class="actions">
+          <button id="runBuyerAgentBtn" class="primary" type="button">Run Buyer Agent</button>
+          <span id="agentConsoleWalletHint" class="hint">Auto-pay requires the selected paired demo CAW.</span>
+        </div>
+        <div id="agentConsoleResult" class="log" aria-live="polite">
+          <div class="hint">Ready. Results will show matched candidates, decision timeline, x402 payment status, and delivery proof details.</div>
+        </div>
+      </div>
+    </div>
+
+    <aside>
+      <div class="panel" style="margin-bottom:18px">
+        <div class="chip" style="display:inline-block;margin-bottom:10px;color:var(--yellow);border-color:rgba(255,209,102,.45)">Seller Agent</div>
+        <h2 style="margin:0 0 8px">Service lifecycle</h2>
+        <p>Seller Agent actions currently reuse the Seller &amp; x402 dashboard. Register new ServiceRegistryV2/x402 listings, update metadata and price, remove services from active discovery, review direct checkout, and refresh revenue without changing backend APIs.</p>
+        <div class="actions">
+          <button id="agentOpenSellerDashboardBtn" class="ghost" type="button">Open Seller Dashboard</button>
+          <button id="agentOpenRegisterBtn" class="ghost" type="button">Register Service</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="chip" style="display:inline-block;margin-bottom:10px;color:var(--cyan);border-color:rgba(101,216,255,.45)">Broker / Procurement Agent</div>
+        <h2 style="margin:0 0 8px">Routing &amp; policy</h2>
+        <p>Informational role for this demo: the broker observes marketplace discovery, candidate scoring, budget policy, x402 payment requirements, and proof recording. Future UI can expose multi-seller routing while preserving the same V2/x402 procurement path.</p>
+        <div class="empty" style="padding:14px;margin-top:12px">
+          <strong style="color:var(--green)">Current semantics:</strong>
+          <div class="hint" style="margin-top:6px">Search V2 services → choose a candidate → pay through x402/CAW Pact when auto-pay is enabled → record delivery proof.</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</section>
 <section id="proofsView" class="hidden"><div class="panel"><div class="toolbar"><div><h2>Delivery proofs</h2><p>Records returned by ServiceRegistry on Sepolia.</p></div><button class="ghost" id="refreshProofs" type="button">Refresh proofs</button></div><div id="proofsTable" class="empty"><span class="loader"></span>Loading proofs...</div></div></section>
 <section id="x402View" class="hidden">
   <div class="panel" style="margin-bottom:18px">
@@ -723,6 +791,133 @@ async function doProcure() {
   }
 }
 
+
+function agentConsoleStatusLabel(status) {
+  const normalized = String(status || "matched").toLowerCase();
+  if (normalized === "completed" || normalized === "delivered") return { icon: "✅", text: "delivered", cls: "good" };
+  if (normalized === "matched") return { icon: "🧭", text: "matched", cls: "good" };
+  if (normalized === "pending_approval" || normalized === "pending") return { icon: "⏳", text: "pending approval", cls: "warn" };
+  if (normalized === "failed" || normalized === "cancelled") return { icon: "❌", text: normalized, cls: "bad" };
+  return { icon: "ℹ️", text: normalized || "unknown", cls: "warn" };
+}
+function agentPriceLabel(candidate) {
+  if (!candidate) return "";
+  const price = candidate.price_seth ?? candidate.price_eth;
+  if (price !== undefined && price !== null && price !== "") return `${price} SETH`;
+  if (candidate.priceWei !== undefined && candidate.priceWei !== null && candidate.priceWei !== "") return `${formatEth(candidate.priceWei)} SETH`;
+  if (candidate.price_wei !== undefined && candidate.price_wei !== null && candidate.price_wei !== "") return `${formatEth(candidate.price_wei)} SETH`;
+  return "price unknown";
+}
+function renderAgentTimeline(timeline) {
+  if (!Array.isArray(timeline) || !timeline.length) return `<div class="hint">No timeline returned.</div>`;
+  return timeline.map((item) => {
+    const step = item && (item.step || item.name || "step");
+    const status = item && (item.status || item.result || "ok");
+    const extra = Object.entries(item || {}).filter(([key]) => !["step", "name", "status", "result"].includes(key)).map(([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : value}`).join(" · ");
+    return `<div class="result-row"><span class="label">${escapeHtml(step)}</span><span class="value ${String(status).toLowerCase().includes("fail") ? "bad" : "good"}">${escapeHtml(status)}${extra ? `<br><span class="hint">${escapeHtml(extra)}</span>` : ""}</span></div>`;
+  }).join("");
+}
+function renderAgentCandidates(candidates) {
+  if (!Array.isArray(candidates) || !candidates.length) return `<div class="hint">No candidates returned.</div>`;
+  return candidates.map((candidate) => {
+    const endpoint = candidate.endpointURI || candidate.endpoint || "";
+    const protocol = candidate.protocol || "x402";
+    const score = candidate.score ?? candidate.match_score ?? "--";
+    return `<div style="border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px;margin-top:8px;background:rgba(0,0,0,.14)">
+      <div style="display:flex;justify-content:space-between;gap:10px"><strong>${escapeHtml(candidate.name || `Service #${candidate.id || ""}`)}</strong><span class="match-badge">score ${escapeHtml(score)}</span></div>
+      <div class="hint" style="margin-top:5px">${escapeHtml(agentPriceLabel(candidate))} · ${escapeHtml(protocol)}</div>
+      ${endpoint ? `<div class="addr">endpoint ${escapeHtml(short(endpoint, 34, 12))}</div>` : ""}
+    </div>`;
+  }).join("");
+}
+function renderAgentPurchaseDetails(result) {
+  const purchase = result.purchase || result.payment || result.transfer || {};
+  const rows = [];
+  const txHash = result.tx_hash || purchase.tx_hash || purchase.transaction_hash || purchase.id || getResultTxHash(result);
+  const pactId = extractPactId(result);
+  const paid = amountPaidLabel(result);
+  if (paid) rows.push(`<div class="result-row"><span class="label">Paid</span><span class="value good">${escapeHtml(paid)}</span></div>`);
+  if (txHash) rows.push(`<div class="result-row"><span class="label">Tx</span><span class="value mono">${explorerTxLink(txHash)}</span></div>`);
+  if (pactId) rows.push(`<div class="result-row"><span class="label">Pact</span><span class="value mono">${escapeHtml(short(pactId, 24, 10))}</span></div>`);
+  if (purchase.service_id) rows.push(`<div class="result-row"><span class="label">Purchased service</span><span class="value">#${escapeHtml(purchase.service_id)}</span></div>`);
+  if (result.proof) rows.push(`<div class="result-row"><span class="label">Proof</span><span class="value good">${escapeHtml(result.proof.tx_hash || result.proof.txHash || "recorded")}</span></div>`);
+  if (result.proof_error) rows.push(`<div class="result-row"><span class="label">Proof Error</span><span class="value warn">${escapeHtml(result.proof_error)}</span></div>`);
+  if (result.error) rows.push(`<div class="result-row"><span class="label">Error</span><span class="value bad">${escapeHtml(result.error)}</span></div>`);
+  return rows.join("") || `<div class="hint">No purchase details yet.</div>`;
+}
+function renderAgentResult(result) {
+  const status = agentConsoleStatusLabel(result.status);
+  const decision = result.decision || {};
+  const selected = decision.selected_service || result.matched_service || {};
+  const serviceName = decision.service_name || selected.name || result.service || "";
+  let html = `<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px"><strong class="${status.cls}">${status.icon} Status: ${escapeHtml(status.text)}</strong><span class="chip">Buyer Agent</span></div>`;
+  html += `<div class="result-row"><span class="label">Decision</span><span class="value">${escapeHtml(serviceName || "No service selected")}${decision.score !== undefined ? ` · score ${escapeHtml(decision.score)}` : ""}</span></div>`;
+  if (decision.reason) html += `<div class="result-row"><span class="label">Reason</span><span class="value">${escapeHtml(decision.reason)}</span></div>`;
+  if (result.budget) html += `<div class="result-row"><span class="label">Budget</span><span class="value">${escapeHtml(result.budget.requested_seth || "not set")} SETH · wallet ${escapeHtml(short(result.budget.wallet_address || connectedWallet || "not selected", 10, 8))}</span></div>`;
+  html += `<h3 style="margin:16px 0 8px;color:var(--cyan);font-size:.92rem">Candidates</h3>${renderAgentCandidates(result.candidates)}`;
+  html += `<h3 style="margin:16px 0 8px;color:var(--cyan);font-size:.92rem">Timeline</h3>${renderAgentTimeline(result.timeline)}`;
+  html += `<h3 style="margin:16px 0 8px;color:var(--cyan);font-size:.92rem">Purchase details</h3>${renderAgentPurchaseDetails(result)}`;
+  if (result.content) html += `<div style="margin-top:14px">${renderContent(String(result.content))}</div>`;
+  el("agentConsoleResult").innerHTML = html;
+  openDeliveryModal(result, serviceName);
+}
+async function runBuyerAgent() {
+  const request = el("agentConsoleRequest").value.trim();
+  const budget = el("agentConsoleBudget").value.trim();
+  const autoPay = el("agentConsoleAutoPay").checked;
+  if (!request) {
+    el("agentConsoleResult").innerHTML = `<div class="bad">请输入采购需求 / Request is required.</div>`;
+    return;
+  }
+  if (!budget) {
+    el("agentConsoleResult").innerHTML = `<div class="bad">请输入 SETH 预算 / Budget is required.</div>`;
+    return;
+  }
+  if (Number(budget) < 0) {
+    el("agentConsoleResult").innerHTML = `<div class="bad">Budget must be non-negative.</div>`;
+    return;
+  }
+  if (autoPay && !connectedWallet) {
+    el("agentConsoleResult").innerHTML = `<div class="bad">Auto-pay requires a selected paired demo CAW. Use the Buyer CAW Wallet panel first; backend was not called.</div>`;
+    return;
+  }
+  if (autoPay && !validatePairedDemoWallet(connectedWallet)) {
+    el("agentConsoleResult").innerHTML = `<div class="bad">Auto-pay requires this server's paired demo CAW. Backend was not called.</div>`;
+    return;
+  }
+  const btn = el("runBuyerAgentBtn");
+  btn.disabled = true;
+  btn.textContent = "Running...";
+  el("agentConsoleResult").innerHTML = `<div class="hint"><span class="loader"></span>Buyer Agent 正在匹配 V2/x402 服务...</div>`;
+  try {
+    const result = await api("/api/agent/buyer/procure", {
+      method: "POST",
+      body: JSON.stringify({ request, budget_seth: budget, wallet_address: connectedWallet, auto_pay: autoPay }),
+      timeout: 400000,
+    });
+    renderAgentResult(result);
+    await loadStatus();
+    if (String(result.status || "").toLowerCase() === "completed" || String(result.status || "").toLowerCase() === "delivered") await loadProofs();
+  } catch (err) {
+    el("agentConsoleResult").innerHTML = `<div class="bad">Buyer Agent failed: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Run Buyer Agent";
+    updateBuyerPayState();
+  }
+}
+function openAgentSellerDashboard(openRegister = false) {
+  switchTab("x402");
+  setTimeout(() => {
+    if (openRegister && el("registerForm")) {
+      el("registerForm").classList.remove("hidden");
+      el("registerForm").scrollIntoView({ behavior: "smooth", block: "start" });
+    } else if (el("x402View")) {
+      el("x402View").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, 0);
+}
+
 function proofRows(proofs) {
   return proofs.map((proof) => {
     const date = proof.timestamp ? new Date(Number(proof.timestamp) * 1000).toLocaleString() : "unknown";
@@ -1234,18 +1429,22 @@ async function sellerRemoveSelectedService() {
 
 function switchTab(name) {
   const isServices = name === "services";
+  const isAgentConsole = name === "agentConsole";
   const isProofs = name === "proofs";
   const isX402 = name === "x402";
   el("servicesView").classList.toggle("hidden", !isServices);
+  el("agentConsoleView").classList.toggle("hidden", !isAgentConsole);
   el("proofsView").classList.toggle("hidden", !isProofs);
   el("x402View").classList.toggle("hidden", !isX402);
   el("servicesTab").classList.toggle("active", isServices);
+  el("agentConsoleTab").classList.toggle("active", isAgentConsole);
   el("proofsTab").classList.toggle("active", isProofs);
   el("x402Tab").classList.toggle("active", isX402);
   if (isProofs) loadProofs();
   if (isX402) { loadX402Services(); loadSellerServices(); loadX402Revenue(); }
 }
 el("servicesTab").addEventListener("click", () => switchTab("services"));
+el("agentConsoleTab").addEventListener("click", () => switchTab("agentConsole"));
 el("proofsTab").addEventListener("click", () => switchTab("proofs"));
 el("x402Tab").addEventListener("click", () => switchTab("x402"));
 el("refreshProofs").addEventListener("click", loadProofs);
@@ -1255,6 +1454,9 @@ el("openSellerLifecycleWalletBtn").addEventListener("click", function() { showSe
 el("payButton").addEventListener("click", paySelected);
 el("searchBtn").addEventListener("click", doSearch);
 el("procureBtn").addEventListener("click", doProcure);
+el("runBuyerAgentBtn").addEventListener("click", runBuyerAgent);
+el("agentOpenSellerDashboardBtn").addEventListener("click", () => openAgentSellerDashboard(false));
+el("agentOpenRegisterBtn").addEventListener("click", () => openAgentSellerDashboard(true));
 el("searchInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(); } });
 el("resetResultBtn").addEventListener("click", resetResult);
 el("deliveryModalClose").addEventListener("click", closeDeliveryModal);
@@ -1337,6 +1539,7 @@ function renderWalletAreas() {
   if (hasWallet && el("visitorWalletDisplay")) el("visitorWalletDisplay").textContent = short(connectedWallet, 10, 8);
 
   if (el("x402BuyBtn")) el("x402BuyBtn").disabled = !hasWallet || !el("x402ServiceSelect").value;
+  if (el("agentConsoleWalletHint")) el("agentConsoleWalletHint").textContent = hasWallet ? `Using paired demo CAW ${short(connectedWallet, 10, 8)} for Agent Console auto-pay.` : "Auto-pay requires the selected paired demo CAW.";
   updateBuyerPayState();
 }
 
