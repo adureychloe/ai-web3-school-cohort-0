@@ -23,6 +23,7 @@ import json
 import os
 import sys
 import time
+from decimal import Decimal
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -109,6 +110,33 @@ def _allowed_local_endpoint_bases() -> set[str]:
 def _clean_base_url(url: str) -> str:
     """Return a stable base URL without a trailing slash."""
     return (url or "").strip().rstrip("/")
+
+
+def json_safe(value):
+    """Convert web3 return values into JSON-serializable objects."""
+    if isinstance(value, dict) or hasattr(value, "items"):
+        try:
+            items = value.items()
+        except Exception:
+            items = []
+        return {str(k): json_safe(v) for k, v in items}
+    if isinstance(value, (list, tuple, set)):
+        return [json_safe(v) for v in value]
+    if isinstance(value, bytes):
+        return "0x" + value.hex()
+    if isinstance(value, Decimal):
+        return str(value)
+    if hasattr(value, "hex") and not isinstance(value, (str, int, float, bool)):
+        try:
+            hex_value = value.hex()
+            return hex_value if str(hex_value).startswith("0x") else "0x" + str(hex_value)
+        except Exception:
+            pass
+    try:
+        json.dumps(value)
+        return value
+    except TypeError:
+        return str(value)
 
 
 def _first_header_value(value: Optional[str]) -> str:
@@ -870,14 +898,14 @@ async def x402_request(
         "timestamp": time.time(),
     })
 
-    response = {
+    response = json_safe({
         "status": "delivered",
         "service": service["name"],
         "amount_paid": service["price_seth"],
         "tx_hash": tx_hash,
         "content": analysis,
         "proof": proof,
-    }
+    })
     if proof_error:
         response["proof_error"] = proof_error
     return response

@@ -63,9 +63,13 @@ def json_safe(value: Any) -> Any:
     """Convert web3 and CLI return values into JSON-serializable objects.
     Also strips sensitive fields (api_key) to prevent credential leaks.
     """
-    if isinstance(value, dict):
-        return {str(k): json_safe(v) for k, v in value.items()
-                if k.lower() not in _SENSITIVE_PACT_FIELDS}
+    if isinstance(value, dict) or hasattr(value, "items"):
+        try:
+            items = value.items()
+        except Exception:
+            items = []
+        return {str(k): json_safe(v) for k, v in items
+                if str(k).lower() not in _SENSITIVE_PACT_FIELDS}
     if isinstance(value, (list, tuple, set)):
         return [json_safe(v) for v in value]
     if isinstance(value, bytes):
@@ -74,10 +78,15 @@ def json_safe(value: Any) -> Any:
         return str(value)
     if hasattr(value, "hex") and not isinstance(value, (str, int, float, bool)):
         try:
-            return value.hex()
+            hex_value = value.hex()
+            return hex_value if str(hex_value).startswith("0x") else "0x" + str(hex_value)
         except Exception:
             pass
-    return value
+    try:
+        json.dumps(value)
+        return value
+    except TypeError:
+        return str(value)
 
 
 # Fields to strip from pact data before sending to browser (credential leak prevention)
@@ -608,7 +617,7 @@ async def api_x402_claim(payload: X402ClaimRequest) -> dict[str, Any]:
             method="POST",
         )
         resp = urllib.request.urlopen(retry_req, timeout=30)
-        result = _json.loads(resp.read())
+        result = json_safe(_json.loads(resp.read()))
 
         return json_safe({
             "status": "delivered",
@@ -620,11 +629,14 @@ async def api_x402_claim(payload: X402ClaimRequest) -> dict[str, Any]:
             "proof": result.get("proof"),
             "proof_error": result.get("proof_error"),
         })
-    except HTTPError as e:
-        body = e.read().decode()
-        raise HTTPException(status_code=e.code, detail=f"Payment verification failed: {body[:300]}")
+    except HTTPError as exc:
+        body = exc.read().decode(errors="replace")
+        raise HTTPException(
+            status_code=exc.code,
+            detail=f"Payment verification failed: {body[:500]}",
+        ) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=f"x402 claim failed: {exc}") from exc
 
 
 # ── Reusable Pact for x402 auto-pay ────────────────────────
@@ -848,7 +860,8 @@ def _api_x402_buy_blocking(payload: X402BuyRequest) -> dict[str, Any]:
             method="POST",
         )
         resp = urllib.request.urlopen(retry_req, timeout=30)
-        result = _json.loads(resp.read())
+        result = json_safe(_json.loads(resp.read()))
+        proof = json_safe(result.get("proof"))
 
         return json_safe({
             "status": "completed",
@@ -857,14 +870,20 @@ def _api_x402_buy_blocking(payload: X402BuyRequest) -> dict[str, Any]:
             "tx_hash": tx_hash,
             "reused_pact": not needs_approval and _x402_pact_id is not None,
             "content": result.get("content", ""),
-            "proof": result.get("proof"),
+            "proof": proof,
             "proof_error": result.get("proof_error"),
         })
 
+    except HTTPError as exc:
+        body = exc.read().decode(errors="replace")
+        raise HTTPException(
+            status_code=exc.code,
+            detail=f"x402 seller endpoint rejected the completed payment: {body[:500]}",
+        ) from exc
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=f"x402 buy failed after CAW step: {exc}") from exc
 
 
 @app.post("/api/x402-buy")
