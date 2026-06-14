@@ -26,7 +26,6 @@ def test_agent_console_ui_exists_and_calls_buyer_agent_endpoint() -> None:
         'id="agentConsoleResult"',
         "Agent Console",
         "Buyer Agent",
-        "Seller Agent",
         "/api/agent/buyer/procure",
     ):
         assert marker in html
@@ -34,5 +33,26 @@ def test_agent_console_ui_exists_and_calls_buyer_agent_endpoint() -> None:
     assert re.search(r"function\s+runBuyerAgent\s*\(", html)
     assert re.search(
         r'el\("runBuyerAgentBtn"\)\.addEventListener\("click",\s*runBuyerAgent\)',
+        html,
+    )
+
+
+def test_agent_console_ui_includes_seller_agent_registration_controls() -> None:
+    html = _html()
+
+    for marker in (
+        'id="sellerAgentBrief"',
+        'id="sellerAgentPrice"',
+        'id="sellerAgentEndpoint"',
+        'id="sellerAgentAddress"',
+        'id="runSellerAgentBtn"',
+        'id="sellerAgentResult"',
+        "/api/agent/seller/register",
+    ):
+        assert marker in html
+
+    assert re.search(r"function\s+runSellerAgent\s*\(", html)
+    assert re.search(
+        r'el\("runSellerAgentBtn"\)\.addEventListener\("click",\s*runSellerAgent\)',
         html,
     )

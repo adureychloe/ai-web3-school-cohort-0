@@ -243,12 +243,22 @@ table { width:100%; border-collapse:collapse } th,td { text-align:left; border-b
     <aside>
       <div class="panel" style="margin-bottom:18px">
         <div class="chip" style="display:inline-block;margin-bottom:10px;color:var(--yellow);border-color:rgba(255,209,102,.45)">Seller Agent</div>
-        <h2 style="margin:0 0 8px">Service lifecycle</h2>
-        <p>Seller Agent actions currently reuse the Seller &amp; x402 dashboard. Register new ServiceRegistryV2/x402 listings, update metadata and price, remove services from active discovery, review direct checkout, and refresh revenue without changing backend APIs.</p>
-        <div class="actions">
-          <button id="agentOpenSellerDashboardBtn" class="ghost" type="button">Open Seller Dashboard</button>
-          <button id="agentOpenRegisterBtn" class="ghost" type="button">Register Service</button>
+        <h2 style="margin:0 0 8px">Autonomous service registration</h2>
+        <p>Describe what you want to sell. The Seller Agent builds ServiceRegistryV2/x402 metadata and calls <strong>/api/agent/seller/register</strong>.</p>
+        <label for="sellerAgentBrief">Service brief</label>
+        <textarea id="sellerAgentBrief" placeholder="e.g. Sell a concise weekly AI x Web3 market intelligence report for hackathon teams"></textarea>
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:end;margin-top:12px">
+          <div><label for="sellerAgentPrice" style="margin-top:0">Price (SETH)</label><input id="sellerAgentPrice" type="number" min="0" step="0.000001" value="0.00005" style="width:100%;border-radius:14px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.28);color:var(--text);padding:12px 14px;font:inherit;outline:none"></div>
+          <div><label for="sellerAgentEndpoint" style="margin-top:0">Endpoint URI</label><input id="sellerAgentEndpoint" type="url" placeholder="https://seller.example.com" style="width:100%;border-radius:14px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.28);color:var(--text);padding:12px 14px;font:inherit;outline:none"></div>
         </div>
+        <label for="sellerAgentAddress">Seller payment address</label>
+        <input id="sellerAgentAddress" type="text" placeholder="0x..." style="width:100%;border-radius:14px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.28);color:var(--text);padding:12px 14px;font:inherit;outline:none">
+        <div class="actions">
+          <button id="runSellerAgentBtn" class="primary" type="button">Run Seller Agent</button>
+          <button id="agentOpenSellerDashboardBtn" class="ghost" type="button">Open Seller Dashboard</button>
+          <button id="agentOpenRegisterBtn" class="ghost" type="button">Manual Register</button>
+        </div>
+        <div id="sellerAgentResult" class="log" aria-live="polite"><div class="hint">Ready. Seller Agent registration results will appear here.</div></div>
       </div>
 
       <div class="panel">
@@ -906,6 +916,49 @@ async function runBuyerAgent() {
     updateBuyerPayState();
   }
 }
+function renderSellerAgentResult(result) {
+  const service = (result && result.service) || {};
+  const registration = (result && result.registration) || {};
+  let html = `<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px"><strong class="good">✅ Status: ${escapeHtml((result && result.status) || "registered")}</strong><span class="chip">Seller Agent</span></div>`;
+  html += `<div class="result-row"><span class="label">Service</span><span class="value">${escapeHtml(service.name || "registered service")}</span></div>`;
+  if (service.description) html += `<div class="result-row"><span class="label">Description</span><span class="value">${escapeHtml(service.description)}</span></div>`;
+  if (service.price_seth) html += `<div class="result-row"><span class="label">Price</span><span class="value good">${escapeHtml(service.price_seth)} SETH</span></div>`;
+  if (service.payment_address) html += `<div class="result-row"><span class="label">Seller</span><span class="value mono">${escapeHtml(service.payment_address)}</span></div>`;
+  if (service.endpoint_uri) html += `<div class="result-row"><span class="label">Endpoint</span><span class="value mono">${escapeHtml(service.endpoint_uri)}</span></div>`;
+  if (registration.tx_hash) html += `<div class="result-row"><span class="label">Tx</span><span class="value mono">${explorerTxLink(registration.tx_hash)}</span></div>`;
+  if (registration.service_id || result.service_id) html += `<div class="result-row"><span class="label">Service ID</span><span class="value">#${escapeHtml(registration.service_id || result.service_id)}</span></div>`;
+  html += `<h3 style="margin:16px 0 8px;color:var(--cyan);font-size:.92rem">Timeline</h3>${renderAgentTimeline((result && result.timeline) || [])}`;
+  el("sellerAgentResult").innerHTML = html;
+}
+async function runSellerAgent() {
+  const service_brief = el("sellerAgentBrief").value.trim();
+  const price_seth = el("sellerAgentPrice").value.trim();
+  const endpoint_uri = el("sellerAgentEndpoint").value.trim();
+  const seller_address = el("sellerAgentAddress").value.trim();
+  if (!service_brief || !price_seth || !endpoint_uri || !seller_address) {
+    el("sellerAgentResult").innerHTML = `<div class="bad">Service brief, price, endpoint URI, and seller address are required.</div>`;
+    return;
+  }
+  const btn = el("runSellerAgentBtn");
+  btn.disabled = true;
+  btn.textContent = "Running...";
+  el("sellerAgentResult").innerHTML = `<div class="hint"><span class="loader"></span>Seller Agent 正在注册 V2/x402 服务...</div>`;
+  try {
+    const result = await api("/api/agent/seller/register", {
+      method: "POST",
+      body: JSON.stringify({ service_brief, price_seth, endpoint_uri, seller_address }),
+      timeout: 400000,
+    });
+    renderSellerAgentResult(result);
+    await loadX402Services();
+    await loadSellerServices();
+  } catch (err) {
+    el("sellerAgentResult").innerHTML = `<div class="bad">Seller Agent failed: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Run Seller Agent";
+  }
+}
 function openAgentSellerDashboard(openRegister = false) {
   switchTab("x402");
   setTimeout(() => {
@@ -1455,6 +1508,7 @@ el("payButton").addEventListener("click", paySelected);
 el("searchBtn").addEventListener("click", doSearch);
 el("procureBtn").addEventListener("click", doProcure);
 el("runBuyerAgentBtn").addEventListener("click", runBuyerAgent);
+el("runSellerAgentBtn").addEventListener("click", runSellerAgent);
 el("agentOpenSellerDashboardBtn").addEventListener("click", () => openAgentSellerDashboard(false));
 el("agentOpenRegisterBtn").addEventListener("click", () => openAgentSellerDashboard(true));
 el("searchInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(); } });

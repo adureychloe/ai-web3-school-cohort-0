@@ -9,6 +9,8 @@ Usage:
     python run.py proof [service_id]    Show delivery proofs (optionally by service)
     python run.py buyer-agent "request" [budget_seth]
                                       Match services via local Buyer Agent API
+    python run.py seller-agent "brief" <price_seth> <endpoint> <seller_addr>
+                                      Register a V2/x402 service via local Seller Agent API
     python run.py status                Show wallet and contract status
     python run.py serve [port]          Start x402 service (sell services)
     python run.py request [id] ["q"]    Buy via x402 (auto-pay with CAW)
@@ -42,6 +44,7 @@ def print_usage():
     print("  status                Show wallet + contract info")
     print('  procure ["request"]   Natural language service procurement')
     print('  buyer-agent "request" [budget_seth]  Match via local Buyer Agent API')
+    print('  seller-agent "brief" <price> <endpoint> <seller>  Register via Seller Agent API')
     print("  serve                 Start x402 service (sell services)")
     print('  request <id> ["q"]    Buy via x402 (auto-pay with CAW)')
     print("  revenue               Show x402 server earnings")
@@ -166,6 +169,54 @@ def cmd_buyer_agent(request_text: str = "", budget_seth: str = ""):
     print(f"  Score: {decision.get('score')}  Source: {body.get('match_source')}")
 
 
+def cmd_seller_agent(service_brief: str = "", price_seth: str = "", endpoint_uri: str = "", seller_address: str = ""):
+    if not service_brief:
+        try:
+            service_brief = input("  What do you want to sell? > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            service_brief = ""
+    if not service_brief or not price_seth or not endpoint_uri or not seller_address:
+        print('  Usage: python run.py seller-agent "brief" <price_seth> <endpoint_uri> <seller_address>')
+        return
+
+    import json
+    import urllib.error
+    import urllib.request
+
+    url = os.environ.get("AGENT_COMMERCE_API", "http://127.0.0.1:8080")
+    headers = {"Content-Type": "application/json"}
+    admin_token = os.environ.get("DEMO_ADMIN_TOKEN", "").strip()
+    if admin_token:
+        headers["X-Demo-Admin-Token"] = admin_token
+    payload = {
+        "service_brief": service_brief,
+        "price_seth": price_seth,
+        "endpoint_uri": endpoint_uri,
+        "seller_address": seller_address,
+    }
+    req = urllib.request.Request(
+        f"{url.rstrip('/')}/api/agent/seller/register",
+        data=json.dumps(payload).encode(),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        resp = urllib.request.urlopen(req, timeout=60)
+        body = json.loads(resp.read())
+    except urllib.error.URLError as exc:
+        print("  Seller Agent API is not reachable or rejected the request.")
+        print("  Start it with: python3 -m uvicorn web.app:app --host 0.0.0.0 --port 8080")
+        print(f"  Error: {exc}")
+        return
+
+    service = body.get("service", {})
+    registration = body.get("registration", {})
+    print(f"  Status: {body.get('status')}")
+    print(f"  Service: [{registration.get('service_id')}] {service.get('name')}")
+    print(f"  Price: {service.get('price_seth')} SETH")
+    print(f"  Tx: {registration.get('tx_hash')}")
+
+
 def main():
     print(BANNER)
 
@@ -205,6 +256,13 @@ def main():
         request = args[1] if len(args) >= 2 else ""
         budget_seth = args[2] if len(args) >= 3 else ""
         cmd_buyer_agent(request, budget_seth)
+
+    elif cmd == "seller-agent":
+        service_brief = args[1] if len(args) >= 2 else ""
+        price_seth = args[2] if len(args) >= 3 else ""
+        endpoint_uri = args[3] if len(args) >= 4 else ""
+        seller_address = args[4] if len(args) >= 5 else ""
+        cmd_seller_agent(service_brief, price_seth, endpoint_uri, seller_address)
 
     elif cmd == "serve":
         from agent_commerce_sandbox.x402_server import serve as x402_serve

@@ -85,9 +85,9 @@
 
 Web UI 只是演示控制台；真正的目标是让 Agent 自动完成注册、发现、购买、验证。
 
-| Agent | 能力 | 当前对应能力 | 下一步 API |
+| Agent | 能力 | 当前对应能力 | 当前 Agent API |
 |---|---|---|---|
-| **Seller Agent** | 根据服务描述自动发布/更新服务 | `POST /register_v2`, `/seller/update_v2` | `POST /api/agent/seller/register` |
+| **Seller Agent** | 根据服务描述自动发布/更新服务 | `POST /api/agent/seller/register`, `/api/x402/seller/update_v2` | `POST /api/agent/seller/register` |
 | **Buyer Agent** | 根据任务意图发现、预算过滤、购买、验收 | `/api/services`, `/api/procure`, `/api/x402-buy` | `POST /api/agent/buyer/procure` |
 | **Broker / Procurement Agent** | 多服务比价、选择最优服务、返回 proof | `procurement_agent.py`, `run.py procure` | 规则版 → LLM reasoning |
 
@@ -147,6 +147,9 @@ python run.py procure "帮我写一份 ETH 市场分析报告"
 # Buyer Agent API 匹配（需先启动 Web API，可选预算 SETH）
 python run.py buyer-agent "Find market analysis for an AI commerce launch" 3
 
+# Seller Agent API 注册（需先启动 Web API；如配置 DEMO_ADMIN_TOKEN，CLI 会自动带上）
+python run.py seller-agent "Sell weekly AI x Web3 market intelligence" 0.00005 https://seller.example.com 0x1111111111111111111111111111111111111111
+
 # 指定服务 ID 支付
 python run.py pay 1 "帮我做 Web3 市场研究"
 
@@ -173,6 +176,7 @@ python run.py request 1 "生成一份研究摘要"
 | `GET` | `/api/services/all` | V2 服务，可选包含 legacy |
 | `POST` | `/api/procure/match` | 根据需求匹配服务 |
 | `POST` | `/api/procure` | 匹配并购买 |
+| `POST` | `/api/agent/seller/register` | Seller Agent：根据服务 brief 生成 V2/x402 metadata，并复用注册安全门槛写入 ServiceRegistryV2 |
 | `POST` | `/api/agent/buyer/procure` | Buyer Agent：按预算过滤 V2/x402 服务、排序，`auto_pay=true` 时会在 CAW transfer 前重新校验当前 x402 价格不超过最大预算 |
 | `POST` | `/api/x402-buy` | 指定服务直接走 x402/CAW auto-pay |
 | `GET` | `/api/proofs` | V2 交付证明 |

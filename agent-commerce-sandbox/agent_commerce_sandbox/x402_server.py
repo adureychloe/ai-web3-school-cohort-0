@@ -1009,16 +1009,13 @@ async def x402_services(request: Request):
     return {"services": services}
 
 
-@x402_app.post("/register_v2")
-async def x402_register_v2(payload: RegisterV2Request, x_demo_admin_token: Optional[str] = Header(None)):
-    """Register a new service on-chain via ServiceRegistryV2.
+def register_v2_service(payload: RegisterV2Request):
+    """Register a new x402 service through the canonical V2 on-chain path.
 
-    Demo-safety gate: this endpoint spends the server deployer key for gas, so
-    non-local callers must provide X-Demo-Admin-Token when DEMO_ADMIN_TOKEN is
-    configured. Local/dev calls continue to work for the hackathon demo.
+    This is the internal seam shared by the public /register_v2 route and any
+    higher-level agents.  It intentionally does not enforce the demo admin token;
+    public routes must keep calling _require_admin_token before invoking it.
     """
-    _require_admin_token(x_demo_admin_token)
-
     try:
         price_wei = Web3.to_wei(float(payload.price_seth), "ether")
     except Exception:
@@ -1062,6 +1059,18 @@ async def x402_register_v2(payload: RegisterV2Request, x_demo_admin_token: Optio
         "provider": X402_PROVIDER,
         "endpoint_uri": payload.endpoint_uri.strip(),
     }
+
+
+@x402_app.post("/register_v2")
+async def x402_register_v2(payload: RegisterV2Request, x_demo_admin_token: Optional[str] = Header(None)):
+    """Register a new service on-chain via ServiceRegistryV2.
+
+    Demo-safety gate: this endpoint spends the server deployer key for gas, so
+    non-local callers must provide X-Demo-Admin-Token when DEMO_ADMIN_TOKEN is
+    configured. Local/dev calls continue to work for the hackathon demo.
+    """
+    _require_admin_token(x_demo_admin_token)
+    return register_v2_service(payload)
 
 
 @x402_app.get("/admin/services")

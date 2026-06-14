@@ -5,16 +5,19 @@ JSON APIs for the single-page interface in web/index.html.
 """
 
 import asyncio
+import inspect
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -59,6 +62,14 @@ class MatchRequest(BaseModel):
     wallet_address: Optional[str] = None
 
 
+class SellerAgentRegisterRequest(BaseModel):
+    service_brief: str = Field(..., min_length=1, max_length=4000)
+    seller_address: str = Field(..., min_length=1, max_length=100)
+    price_seth: str = Field(..., min_length=1, max_length=64)
+    endpoint_uri: str = Field(..., min_length=1, max_length=500)
+    category: Optional[str] = Field(default=None, max_length=120)
+
+
 def json_safe(value: Any) -> Any:
     """Convert web3 and CLI return values into JSON-serializable objects.
     Also strips sensitive fields (api_key) to prevent credential leaks.
@@ -100,6 +111,56 @@ def _sanitize_pact(pact: dict) -> dict:
     return {k: v for k, v in pact.items() if k.lower() not in _SENSITIVE_PACT_FIELDS}
 
 
+def _is_valid_http_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value.strip())
+    except Exception:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _build_seller_agent_metadata(service_brief: str, category: Optional[str] = None) -> dict[str, str]:
+    brief = " ".join((service_brief or "").strip().split())
+    category_text = " ".join((category or "").strip().split())
+    words = re.findall(r"[A-Za-z0-9]+", brief)
+    if category_text:
+        name_root = f"{category_text.title()} Agent"
+    else:
+        name_root = "Seller Agent"
+    if words:
+        headline = " ".join(words[: min(8, len(words))])
+        name = f"{headline[:72].strip()}".strip()
+        if category_text and category_text.lower() not in name.lower():
+            name = f"{category_text.title()} {name}"
+        description = f"{brief}"
+        if category_text:
+            description = f"{category_text.title()}: {brief}"
+    else:
+        name = name_root
+        description = category_text or "Seller-facing service registration from a brief."
+    name = name.strip(" -:;,") or name_root
+    if not name:
+        name = name_root
+    description = description.strip()
+    if not description:
+        description = f"{name} service derived from the seller brief."
+    return {"name": name, "description": description}
+
+
+async def _register_v2_service_from_agent(service: Optional[dict[str, Any]] = None, **kwargs: Any) -> dict[str, Any]:
+    from agent_commerce_sandbox.x402_server import RegisterV2Request, register_v2_service
+
+    payload = dict(service or {})
+    payload.update(kwargs)
+    allowed = {"name", "description", "price_seth", "endpoint_uri", "token_id", "chain_id", "protocol", "seller_address", "payment_address"}
+    request = RegisterV2Request(**{k: v for k, v in payload.items() if k in allowed})
+    return await to_thread(register_v2_service, request)
+
+
+async def register_v2_service_from_agent(service: Optional[dict[str, Any]] = None, **kwargs: Any) -> dict[str, Any]:
+    return await _register_v2_service_from_agent(service=service, **kwargs)
+
+
 def run_caw_json(*args: str, timeout: int = 60) -> dict[str, Any]:
     """Run the caw CLI and parse JSON output."""
     cmd = ["caw", *args, "--timeout", str(timeout)]
@@ -130,6 +191,12 @@ async def to_thread(func, *args, **kwargs):
         finally:
             sys.stdout = old_out
     return await asyncio.to_thread(_wrapped)
+
+
+async def _maybe_await(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 @app.get("/")
@@ -572,6 +639,75 @@ def _buyer_agent_decision_reason(payload: BuyerAgentProcureRequest, candidate_co
         f"Selected the highest-ranked active x402 service within the "
         f"{_format_decimal_plain(payload.budget_seth)} SETH budget from {candidate_count} candidate(s)."
     )
+
+
+@app.post("/api/agent/seller/register")
+async def api_agent_seller_register(
+    payload: SellerAgentRegisterRequest,
+    x_demo_admin_token: Optional[str] = Header(None),
+) -> dict[str, Any]:
+    """Seller Agent: turn a service brief into V2/x402 metadata and register it."""
+    try:
+        from agent_commerce_sandbox.x402_server import _require_admin_token
+
+        _require_admin_token(x_demo_admin_token)
+        brief = " ".join(payload.service_brief.strip().split())
+        if not brief:
+            raise HTTPException(status_code=400, detail="service_brief is required")
+
+        try:
+            price = Decimal(str(payload.price_seth).strip())
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Invalid price_seth") from exc
+        if not price.is_finite() or price <= 0:
+            raise HTTPException(status_code=400, detail="price_seth must be greater than zero")
+
+        endpoint = payload.endpoint_uri.strip()
+        if not _is_valid_http_url(endpoint):
+            raise HTTPException(status_code=400, detail="endpoint_uri must be an http(s) URL")
+
+        try:
+            seller_address = _verify_address(payload.seller_address)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid seller_address")
+
+        metadata = _build_seller_agent_metadata(brief, payload.category)
+        service = {
+            **metadata,
+            "price_seth": _format_decimal_plain(price),
+            "payment_address": seller_address,
+            "seller_address": seller_address,
+            "endpoint_uri": endpoint,
+        }
+        if payload.category:
+            service["category"] = payload.category.strip()
+
+        timeline = [
+            {"step": "parsed_brief", "status": "ok"},
+            {"step": "built_metadata", "status": "ok", "name": service["name"]},
+        ]
+
+        registration = await _maybe_await(register_v2_service_from_agent(service=service))
+        timeline.append({"step": "registered_v2", "status": "ok", "service_id": registration.get("service_id") if isinstance(registration, dict) else None})
+
+        registered_service = dict(service)
+        if isinstance(registration, dict) and isinstance(registration.get("service"), dict):
+            registered_service.update(registration["service"])
+        registered_service["payment_address"] = str(registered_service.get("payment_address") or seller_address).lower()
+        registered_service["endpoint_uri"] = str(registered_service.get("endpoint_uri") or endpoint)
+        registered_service["price_seth"] = str(registered_service.get("price_seth") or service["price_seth"])
+
+        return json_safe({
+            "status": (registration.get("status") if isinstance(registration, dict) else None) or "registered",
+            "agent": "seller",
+            "service": registered_service,
+            "registration": registration,
+            "timeline": timeline,
+        })
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/agent/buyer/procure")
